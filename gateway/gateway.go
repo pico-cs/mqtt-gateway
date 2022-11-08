@@ -45,7 +45,7 @@ func New(config *Config) (*Gateway, error) {
 		subscriptions: make(map[string][]subscription),
 		subTopic:      joinTopic(config.TopicRoot, multiLevel),
 		errorTopic:    joinTopic(config.TopicRoot, classError),
-		logger:        log.New(os.Stderr, "gateway: ", log.LstdFlags),
+		logger:        log.New(os.Stderr, "", log.LstdFlags),
 	}
 	gw.client.Router = paho.NewSingleHandlerRouter(gw.handler)
 

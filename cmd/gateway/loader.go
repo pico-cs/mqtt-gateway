@@ -41,28 +41,17 @@ func (l *loader) loadFile(fsys fs.FS, fn string, v any) error {
 	return nil
 }
 
-func (l *loader) log(fn string, err error, overwrite bool) {
-	switch {
-	case err != nil:
-		log.Printf("...%s %s", fn, err)
-	case overwrite:
-		log.Printf("...loaded %s (overwrite)", fn)
-	default:
-		log.Printf("...loaded %s", fn)
-	}
-}
-
 func (l *loader) loadConfig(fsys fs.FS, path string) {
-	overwrite := l.config != nil
-
 	fn := filepath.Join(path, configFilename)
 
 	var config gateway.Config
-	err := l.loadFile(fsys, fn, &config)
-	if err == nil {
-		l.config = &config
+	if err := l.loadFile(fsys, fn, &config); err != nil {
+		log.Printf("...%s %s", fn, err)
 	}
-	l.log(fn, err, overwrite)
+
+	ok := l.config != nil
+	l.config = &config
+	log.Printf("...loaded %s %s", fn, overwrite(ok))
 }
 
 func splitNameExt(fn string) (string, string) {
@@ -71,26 +60,36 @@ func splitNameExt(fn string) (string, string) {
 	return strings.ToLower(name), strings.ToLower(ext) // not case sensitive
 }
 
+type overwrite bool
+
+func (ow overwrite) String() string {
+	if !ow {
+		return ""
+	}
+	return "(overwrite)"
+}
+
 func (l *loader) loadCSConfigMap(fsys fs.FS, path string) {
 	fs.WalkDir(fsys, path, func(subPath string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		name, ext := splitNameExt(d.Name())
+		fileName, ext := splitNameExt(d.Name())
 		if ext != extJSON {
 			log.Printf("...skipped %s", subPath)
 			return nil
 		}
-		_, overwrite := l.csConfigMap[name]
 		var cs gateway.CSConfig
-		err = l.loadFile(fsys, subPath, &cs)
-		if err == nil {
-			if cs.Name == "" {
-				cs.Name = name // if name is empty use file name
-			}
-			l.csConfigMap[name] = &cs
+		if err = l.loadFile(fsys, subPath, &cs); err != nil {
+			log.Printf("...%s %s", subPath, err)
 		}
-		l.log(subPath, err, overwrite)
+
+		if cs.Name == "" {
+			cs.Name = fileName // if name is empty use file name
+		}
+		_, ok := l.csConfigMap[cs.Name]
+		l.csConfigMap[cs.Name] = &cs
+		log.Printf("...loaded %s as %s %s", subPath, cs.Name, overwrite(ok))
 		return nil
 	})
 }
@@ -100,21 +99,22 @@ func (l *loader) loadLocoConfigMap(fsys fs.FS, path string) {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		name, ext := splitNameExt(d.Name())
+		fileName, ext := splitNameExt(d.Name())
 		if ext != extJSON {
 			log.Printf("...skipped %s", subPath)
 			return nil
 		}
-		_, overwrite := l.locoConfigMap[name]
-		var loco *gateway.LocoConfig
-		err = l.loadFile(fsys, subPath, loco)
-		if err == nil {
-			if loco.Name == "" {
-				loco.Name = name // if name is empty use file name
-			}
-			l.locoConfigMap[name] = loco
+		var loco gateway.LocoConfig
+		if err = l.loadFile(fsys, subPath, &loco); err != nil {
+			log.Printf("...%s %s", subPath, err)
 		}
-		l.log(subPath, err, overwrite)
+
+		if loco.Name == "" {
+			loco.Name = fileName // if name is empty use file name
+		}
+		_, ok := l.locoConfigMap[loco.Name]
+		l.locoConfigMap[loco.Name] = &loco
+		log.Printf("...loaded %s as %s %s", subPath, loco.Name, overwrite(ok))
 		return nil
 	})
 }

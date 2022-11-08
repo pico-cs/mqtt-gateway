@@ -4,8 +4,6 @@
 [![REUSE status](https://api.reuse.software/badge/github.com/pico-cs/mqtt-gateway)](https://api.reuse.software/info/github.com/pico-cs/mqtt-gateway)
 ![](https://github.com/pico-cs/mqtt-gateway/workflows/build/badge.svg)
 
-## Work in progress - coming soon!
-
 mqtt-gateway connects pico-cs command stations to a MQTT broker.
 
 ## Licensing

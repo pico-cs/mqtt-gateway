@@ -69,9 +69,10 @@ type LocoFctConfig struct {
 
 // LocoConfig represents configuration data for a loco.
 type LocoConfig struct {
-	Name string                   `json:"name"`
-	Addr uint                     `json:"addr"`
-	Fcts map[string]LocoFctConfig `json:"fcts"`
+	CSName string                   `json:"csName"`
+	Name   string                   `json:"name"`
+	Addr   uint                     `json:"addr"`
+	Fcts   map[string]LocoFctConfig `json:"fcts"`
 }
 
 func (c *LocoConfig) validate() error {

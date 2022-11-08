@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/pico-cs/go-client/client"
 )
@@ -11,6 +12,8 @@ type CS struct {
 	config  *CSConfig
 	gateway *Gateway
 	client  *client.Client
+	mu      sync.Mutex
+	locos   map[string]*LocoConfig
 }
 
 // NewCS returns a new command station instance.
@@ -19,7 +22,7 @@ func NewCS(config *CSConfig, gateway *Gateway) (*CS, error) {
 		return nil, err
 	}
 
-	cs := &CS{config: config, gateway: gateway}
+	cs := &CS{config: config, gateway: gateway, locos: make(map[string]*LocoConfig)}
 
 	// connect
 	port, err := config.port()
@@ -46,7 +49,7 @@ func (cs *CS) Close() error {
 }
 
 func (cs *CS) subscribe() {
-	cs.gateway.subscribe(cs, joinTopic("cs", cs.config.Name, "enabled", "get"), cs.enabled(cs.client))
+	cs.gateway.subscribe(cs, joinTopic("cs", cs.config.Name, "enabled", "get"), cs.getEnabled(cs.client))
 	cs.gateway.subscribe(cs, joinTopic("cs", cs.config.Name, "enabled", "set"), cs.setEnabled(cs.client))
 }
 
@@ -57,7 +60,7 @@ func (cs *CS) unsubscribe() {
 
 func (cs *CS) pushHandler(msg string) {} // TODO: push messages
 
-func (cs *CS) enabled(client *client.Client) hndFn {
+func (cs *CS) getEnabled(client *client.Client) hndFn {
 	return func(payload any) (any, error) {
 		return client.Enabled()
 	}
@@ -73,19 +76,23 @@ func (cs *CS) setEnabled(client *client.Client) hndFn {
 	}
 }
 
-func (cs *CS) locoDir(client *client.Client, addr uint) hndFn {
+func (cs *CS) getLocoDir(client *client.Client, addr uint) hndFn {
 	return func(payload any) (any, error) {
 		return client.LocoDir(addr)
 	}
 }
 
-func (cs *CS) setLocoDir(client *client.Client, addr uint) hndFn {
+func (cs *CS) setLocoDir(client *client.Client, addr uint, publish bool) hndFn {
 	return func(payload any) (any, error) {
 		dir, ok := payload.(bool)
 		if !ok {
 			return nil, fmt.Errorf("setLocoDir: invalid dir type %T", payload)
 		}
-		return client.SetLocoDir(addr, dir)
+		dir, err := client.SetLocoDir(addr, dir)
+		if !publish {
+			return nil, err
+		}
+		return dir, err
 	}
 }
 
@@ -95,7 +102,7 @@ func (cs *CS) toggleLocoDir(client *client.Client, addr uint) hndFn {
 	}
 }
 
-func (cs *CS) locoSpeed(client *client.Client, addr uint) hndFn {
+func (cs *CS) getLocoSpeed(client *client.Client, addr uint) hndFn {
 	return func(payload any) (any, error) {
 		speed, err := client.LocoSpeed128(addr)
 		if err == nil && speed > 0 {
@@ -105,7 +112,7 @@ func (cs *CS) locoSpeed(client *client.Client, addr uint) hndFn {
 	}
 }
 
-func (cs *CS) setLocoSpeed(client *client.Client, addr uint) hndFn {
+func (cs *CS) setLocoSpeed(client *client.Client, addr uint, publish bool) hndFn {
 	return func(payload any) (any, error) {
 		f64, ok := payload.(float64)
 		if !ok {
@@ -115,7 +122,11 @@ func (cs *CS) setLocoSpeed(client *client.Client, addr uint) hndFn {
 		if speed != 0 {
 			speed++ // skip emergency stop
 		}
-		return client.SetLocoSpeed128(addr, speed)
+		speed, err := client.SetLocoSpeed128(addr, speed)
+		if !publish {
+			return nil, err
+		}
+		return speed, err
 	}
 }
 
@@ -125,19 +136,23 @@ func (cs *CS) stopLoco(client *client.Client, addr uint) hndFn {
 	}
 }
 
-func (cs *CS) locoFct(client *client.Client, addr, no uint) hndFn {
+func (cs *CS) getLocoFct(client *client.Client, addr, no uint) hndFn {
 	return func(payload any) (any, error) {
 		return client.LocoFct(addr, no)
 	}
 }
 
-func (cs *CS) setLocoFct(client *client.Client, addr, no uint) hndFn {
+func (cs *CS) setLocoFct(client *client.Client, addr, no uint, publish bool) hndFn {
 	return func(payload any) (any, error) {
 		fct, ok := payload.(bool)
 		if !ok {
 			return nil, fmt.Errorf("setLocoFct: invalid fct type %T", payload)
 		}
-		return client.SetLocoFct(addr, no, fct)
+		fct, err := client.SetLocoFct(addr, no, fct)
+		if !publish {
+			return nil, err
+		}
+		return fct, err
 	}
 }
 
@@ -147,21 +162,48 @@ func (cs *CS) toggleLocoFct(client *client.Client, addr, no uint) hndFn {
 	}
 }
 
+// subscribeLocoActions subscribes to loco actions for a loco controlled by this command station.
+func (cs *CS) subscribeLocoActions(config *LocoConfig) {
+	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir", "get"), cs.getLocoDir(cs.client, config.Addr))
+	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir", "set"), cs.setLocoDir(cs.client, config.Addr, true))
+	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir", "toggle"), cs.toggleLocoDir(cs.client, config.Addr))
+	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed", "get"), cs.getLocoSpeed(cs.client, config.Addr))
+	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed", "set"), cs.setLocoSpeed(cs.client, config.Addr, true))
+	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed", "stop"), cs.stopLoco(cs.client, config.Addr))
+	for name, locoConfig := range config.Fcts {
+		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name, "get"), cs.getLocoFct(cs.client, config.Addr, locoConfig.No))
+		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name, "set"), cs.setLocoFct(cs.client, config.Addr, locoConfig.No, true))
+		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name, "toggle"), cs.toggleLocoFct(cs.client, config.Addr, locoConfig.No))
+	}
+}
+
+// subscribeLocoListeners subscribes to loco listeners for a loco not controlled by this command station.
+func (cs *CS) subscribeLocoListeners(config *LocoConfig) {
+	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir"), cs.setLocoDir(cs.client, config.Addr, false))
+	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed"), cs.setLocoSpeed(cs.client, config.Addr, false))
+	for name, locoConfig := range config.Fcts {
+		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name), cs.setLocoFct(cs.client, config.Addr, locoConfig.No, false))
+	}
+}
+
 // AddLoco adds a loco via a loco configuration to the command station.
 func (cs *CS) AddLoco(config *LocoConfig) error {
 	if err := config.validate(); err != nil {
 		return err
 	}
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir", "get"), cs.locoDir(cs.client, config.Addr))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir", "set"), cs.setLocoDir(cs.client, config.Addr))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir", "toggle"), cs.toggleLocoDir(cs.client, config.Addr))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed", "get"), cs.locoSpeed(cs.client, config.Addr))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed", "set"), cs.setLocoSpeed(cs.client, config.Addr))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed", "stop"), cs.stopLoco(cs.client, config.Addr))
-	for name, locoConfig := range config.Fcts {
-		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name, "get"), cs.locoFct(cs.client, config.Addr, locoConfig.No))
-		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name, "set"), cs.setLocoFct(cs.client, config.Addr, locoConfig.No))
-		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name, "toggle"), cs.toggleLocoFct(cs.client, config.Addr, locoConfig.No))
+
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	if _, ok := cs.locos[config.Name]; ok {
+		return fmt.Errorf("loco %s was already added", config.Name)
+	}
+	cs.locos[config.Name] = config
+
+	if config.CSName == cs.config.Name {
+		cs.subscribeLocoActions(config)
+	} else {
+		cs.subscribeLocoListeners(config)
 	}
 	return nil
 }

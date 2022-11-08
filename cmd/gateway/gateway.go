@@ -51,9 +51,11 @@ func main() {
 	loader := newLoader()
 	log.Printf("load embedded configuration files")
 	loader.load(embedFsys, embedConfigDir)
-	log.Printf("load external configuration files at %s", *externConfigDir)
-	externFsys := os.DirFS(*externConfigDir)
-	loader.load(externFsys, "")
+	if *externConfigDir != "" {
+		log.Printf("load external configuration files at %s", *externConfigDir)
+		externFsys := os.DirFS(*externConfigDir)
+		loader.load(externFsys, "")
+	}
 
 	if topicRootValue.isSet || loader.config.TopicRoot == "" {
 		loader.config.TopicRoot = topicRoot
@@ -71,21 +73,30 @@ func main() {
 	}
 	defer gw.Close()
 
+	i := 0
 	for _, csConfig := range loader.csConfigMap {
+
+		log.Printf("register central station %s", csConfig.Name)
+
 		cs, err := gateway.NewCS(csConfig, gw)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer cs.Close()
-	}
 
-	/*
-		csConfig := &gateway.CSConfig{
-			Name: "cs01",
+		for _, locoConfig := range loader.locoConfigMap {
+			if i == 0 && locoConfig.CSName == "" { // no controlling command station defined -> use first one
+				locoConfig.CSName = csConfig.Name
+			}
+
+			log.Printf("add loco %s to central station %s", locoConfig.Name, csConfig.Name)
+
+			if err := cs.AddLoco(locoConfig); err != nil {
+				log.Fatal(err)
+			}
 		}
-	*/
-
-	// TODO locos
+		i++
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
