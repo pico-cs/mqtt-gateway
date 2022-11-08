@@ -5,10 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"net"
+	"net/url"
 	"os"
 	"sync"
 
+	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/paho"
 )
 
@@ -21,8 +22,8 @@ type subscription struct {
 
 // Gateway represents a MQTT broker gateway.
 type Gateway struct {
-	config *Config
-	client *paho.Client
+	config            *Config
+	connectionManager *autopaho.ConnectionManager
 
 	mu            sync.RWMutex
 	subscriptions map[string][]subscription
@@ -38,34 +39,39 @@ func New(config *Config) (*Gateway, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
-	pahoCfg := paho.ClientConfig{}
+
 	gw := &Gateway{
 		config:        config,
-		client:        paho.NewClient(pahoCfg),
 		subscriptions: make(map[string][]subscription),
 		subTopic:      joinTopic(config.TopicRoot, multiLevel),
 		errorTopic:    joinTopic(config.TopicRoot, classError),
 		logger:        log.New(os.Stderr, "", log.LstdFlags),
 	}
-	gw.client.Router = paho.NewSingleHandlerRouter(gw.handler)
 
-	// connect
-	address := gw.config.address()
-	conn, err := net.Dial("tcp", address)
+	pahoConfig := autopaho.ClientConfig{
+		BrokerUrls: []*url.URL{{Scheme: "tcp", Host: config.address()}},
+		ClientConfig: paho.ClientConfig{
+			Router: paho.NewSingleHandlerRouter(gw.handler),
+		},
+	}
+
+	pahoConfig.SetUsernamePassword(config.Username, []byte(config.Password))
+
+	connectionManager, err := autopaho.NewConnection(context.Background(), pahoConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	gw.client.Conn = conn
+	gw.connectionManager = connectionManager
 
-	connect := &paho.Connect{}
-	if _, err := gw.client.Connect(context.Background(), connect); err != nil {
+	if err := connectionManager.AwaitConnection(context.Background()); err != nil {
 		return nil, err
 	}
+
 	if err := gw.subscribeBroker(); err != nil {
 		return nil, err
 	}
-	gw.logger.Printf("connect to broker %s", address)
+	gw.logger.Printf("connect to broker %s", config.address())
 	return gw, nil
 }
 
@@ -73,8 +79,7 @@ func New(config *Config) (*Gateway, error) {
 func (gw *Gateway) Close() error {
 	gw.logger.Printf("disconnect from broker %s", gw.config.address())
 	gw.unsubscribeBroker() // ignore error
-	disconnect := &paho.Disconnect{}
-	return gw.client.Disconnect(disconnect)
+	return gw.connectionManager.Disconnect(context.Background())
 }
 
 func (gw *Gateway) subscribeBroker() error {
@@ -83,7 +88,7 @@ func (gw *Gateway) subscribeBroker() error {
 			gw.subTopic: {QoS: 1}, //QoS 1: at least once
 		},
 	}
-	if suback, err := gw.client.Subscribe(context.Background(), sub); err != nil {
+	if suback, err := gw.connectionManager.Subscribe(context.Background(), sub); err != nil {
 		gw.logger.Printf("subscribe suback %v error %s", suback, err)
 		return err
 	}
@@ -94,7 +99,7 @@ func (gw *Gateway) unsubscribeBroker() error {
 	unsub := &paho.Unsubscribe{
 		Topics: []string{gw.subTopic},
 	}
-	if unsuback, err := gw.client.Unsubscribe(context.Background(), unsub); err != nil {
+	if unsuback, err := gw.connectionManager.Unsubscribe(context.Background(), unsub); err != nil {
 		gw.logger.Printf("unsubscribe unsuback %v error %s", unsuback, err)
 		return err
 	}
@@ -171,7 +176,7 @@ func (gw *Gateway) publish(topic string, reply any) {
 		Payload: payload,
 	}
 
-	if _, err := gw.client.Publish(context.Background(), publish); err != nil {
+	if _, err := gw.connectionManager.Publish(context.Background(), publish); err != nil {
 		gw.publishError(topic, err)
 	}
 }
@@ -196,7 +201,7 @@ func (gw *Gateway) publishError(topic string, err error) {
 		Payload: payload,
 	}
 
-	if _, err := gw.client.Publish(context.Background(), publish); err != nil {
+	if _, err := gw.connectionManager.Publish(context.Background(), publish); err != nil {
 		// hm, we can only log...
 		gw.logger.Printf("publish error: topic %s text %s", topic, err)
 	}

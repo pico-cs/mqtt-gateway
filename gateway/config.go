@@ -19,6 +19,8 @@ type Config struct {
 	TopicRoot string `json:"topicRoot"`
 	Host      string `json:"host"`
 	Port      string `json:"port"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
 }
 
 func (c *Config) validate() error {

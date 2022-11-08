@@ -22,6 +22,8 @@ const (
 	envTopicRoot = "TopicRoot"
 	envHost      = "Host"
 	envPort      = "Port"
+	envUsername  = "Username"
+	envPassword  = "Password"
 )
 
 func main() {
@@ -36,14 +38,21 @@ func main() {
 	topicRoot := lookupEnv(envTopicRoot, gateway.DefaultTopicRoot)
 	host := lookupEnv(envHost, gateway.DefaultHost)
 	port := lookupEnv(envPort, gateway.DefaultPort)
+	username := lookupEnv(envUsername, "")
+	password := lookupEnv(envPassword, "")
 
 	topicRootValue := &strValue{s: &topicRoot}
 	hostValue := &strValue{s: &host}
 	portValue := &strValue{s: &port}
+	usernameValue := &strValue{s: &username}
+	passwordValue := &strValue{s: &password}
 
 	flag.Var(topicRootValue, "topicRoot", "topic root")
 	flag.Var(hostValue, "host", "host")
 	flag.Var(portValue, "port", "port")
+	flag.Var(usernameValue, "username", "username")
+	flag.Var(passwordValue, "password", "password")
+
 	externConfigDir := flag.String("configDir", "", "configuration directory")
 
 	flag.Parse()
@@ -65,6 +74,12 @@ func main() {
 	}
 	if portValue.isSet || loader.config.Port == "" {
 		loader.config.Port = port
+	}
+	if usernameValue.isSet {
+		loader.config.Username = username
+	}
+	if passwordValue.isSet {
+		loader.config.Password = password
 	}
 
 	gw, err := gateway.New(loader.config)
