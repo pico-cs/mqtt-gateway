@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/pico-cs/mqtt-gateway/gateway"
@@ -26,70 +27,55 @@ const (
 	envPassword  = "Password"
 )
 
+const (
+	csPath   = "cs"
+	locoPath = "loco"
+	extJSON  = ".json"
+)
+
+func lookupEnv(name, defVal string) string {
+	if val, ok := os.LookupEnv(name); ok {
+		return val
+	}
+	return defVal
+}
+
 func main() {
 
-	lookupEnv := func(name, defVal string) string {
-		if val, ok := os.LookupEnv(name); ok {
-			return val
-		}
-		return defVal
-	}
+	config := &gateway.Config{}
 
-	topicRoot := lookupEnv(envTopicRoot, gateway.DefaultTopicRoot)
-	host := lookupEnv(envHost, gateway.DefaultHost)
-	port := lookupEnv(envPort, gateway.DefaultPort)
-	username := lookupEnv(envUsername, "")
-	password := lookupEnv(envPassword, "")
-
-	topicRootValue := &strValue{s: &topicRoot}
-	hostValue := &strValue{s: &host}
-	portValue := &strValue{s: &port}
-	usernameValue := &strValue{s: &username}
-	passwordValue := &strValue{s: &password}
-
-	flag.Var(topicRootValue, "topicRoot", "topic root")
-	flag.Var(hostValue, "host", "host")
-	flag.Var(portValue, "port", "port")
-	flag.Var(usernameValue, "username", "username")
-	flag.Var(passwordValue, "password", "password")
+	flag.StringVar(&config.TopicRoot, "topicRoot", lookupEnv(envTopicRoot, gateway.DefaultTopicRoot), "topic root")
+	flag.StringVar(&config.Host, "host", lookupEnv(envHost, gateway.DefaultHost), "MQTT host")
+	flag.StringVar(&config.Port, "port", lookupEnv(envPort, gateway.DefaultPort), "MQTT port")
+	flag.StringVar(&config.Username, "username", lookupEnv(envUsername, ""), "user name")
+	flag.StringVar(&config.Password, "password", lookupEnv(envPassword, ""), "password")
 
 	externConfigDir := flag.String("configDir", "", "configuration directory")
 
 	flag.Parse()
 
-	loader := newLoader()
+	csConfigMap := make(map[string]*gateway.CSConfig)
+	locoConfigMap := make(map[string]*gateway.LocoConfig)
+
 	log.Printf("load embedded configuration files")
-	loader.load(embedFsys, embedConfigDir)
+	loadCSConfigMap(csConfigMap, embedFsys, filepath.Join(embedConfigDir, csPath))
+	loadLocoConfigMap(locoConfigMap, embedFsys, filepath.Join(embedConfigDir, locoPath))
+
 	if *externConfigDir != "" {
 		log.Printf("load external configuration files at %s", *externConfigDir)
 		externFsys := os.DirFS(*externConfigDir)
-		loader.load(externFsys, "")
+		loadCSConfigMap(csConfigMap, externFsys, csPath)
+		loadLocoConfigMap(locoConfigMap, externFsys, locoPath)
 	}
 
-	if topicRootValue.isSet || loader.config.TopicRoot == "" {
-		loader.config.TopicRoot = topicRoot
-	}
-	if hostValue.isSet || loader.config.Host == "" {
-		loader.config.Host = host
-	}
-	if portValue.isSet || loader.config.Port == "" {
-		loader.config.Port = port
-	}
-	if usernameValue.isSet {
-		loader.config.Username = username
-	}
-	if passwordValue.isSet {
-		loader.config.Password = password
-	}
-
-	gw, err := gateway.New(loader.config)
+	gw, err := gateway.New(config)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer gw.Close()
 
 	i := 0
-	for _, csConfig := range loader.csConfigMap {
+	for _, csConfig := range csConfigMap {
 
 		log.Printf("register central station %s", csConfig.Name)
 
@@ -99,7 +85,7 @@ func main() {
 		}
 		defer cs.Close()
 
-		for _, locoConfig := range loader.locoConfigMap {
+		for _, locoConfig := range locoConfigMap {
 			if i == 0 && locoConfig.CSName == "" { // no controlling command station defined -> use first one
 				locoConfig.CSName = csConfig.Name
 			}
