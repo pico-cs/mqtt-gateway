@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/paho"
@@ -49,7 +50,8 @@ func New(config *Config) (*Gateway, error) {
 	}
 
 	pahoConfig := autopaho.ClientConfig{
-		BrokerUrls: []*url.URL{{Scheme: "tcp", Host: config.address()}},
+		BrokerUrls:     []*url.URL{{Scheme: "tcp", Host: config.address()}},
+		OnConnectError: func(err error) { log.Println(err) },
 		ClientConfig: paho.ClientConfig{
 			Router: paho.NewSingleHandlerRouter(gw.handler),
 		},
@@ -58,13 +60,18 @@ func New(config *Config) (*Gateway, error) {
 	pahoConfig.SetUsernamePassword(config.Username, []byte(config.Password))
 
 	connectionManager, err := autopaho.NewConnection(context.Background(), pahoConfig)
+	//cancel()
 	if err != nil {
 		return nil, err
 	}
 
 	gw.connectionManager = connectionManager
 
-	if err := connectionManager.AwaitConnection(context.Background()); err != nil {
+	// don't wait forever in case of connection issues like invalid host or port.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	if err := connectionManager.AwaitConnection(ctx); err != nil {
 		return nil, err
 	}
 
