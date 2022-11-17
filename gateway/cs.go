@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"fmt"
+	"regexp"
 	"sync"
 
 	"github.com/pico-cs/go-client/client"
@@ -14,6 +15,8 @@ type CS struct {
 	client  *client.Client
 	mu      sync.Mutex
 	locos   map[string]*LocoConfig
+	inclsRe []*regexp.Regexp
+	exclsRe []*regexp.Regexp
 }
 
 // NewCS returns a new command station instance.
@@ -22,18 +25,30 @@ func NewCS(config *CSConfig, gateway *Gateway) (*CS, error) {
 		return nil, err
 	}
 
+	conn, err := config.conn()
+	if err != nil {
+		return nil, err
+	}
+
 	cs := &CS{config: config, gateway: gateway, locos: make(map[string]*LocoConfig)}
 
-	// connect
-	port, err := config.port()
-	if err != nil {
-		return nil, err
+	for _, incl := range config.Incls {
+		re, err := regexp.Compile(incl)
+		if err != nil {
+			return nil, err
+		}
+		cs.inclsRe = append(cs.inclsRe, re)
 	}
-	serial, err := client.NewSerial(port)
-	if err != nil {
-		return nil, err
+
+	for _, excl := range config.Excls {
+		re, err := regexp.Compile(excl)
+		if err != nil {
+			return nil, err
+		}
+		cs.exclsRe = append(cs.exclsRe, re)
 	}
-	cs.client = client.New(serial, cs.pushHandler)
+
+	cs.client = client.New(conn, cs.pushHandler)
 
 	cs.subscribe()
 
@@ -186,24 +201,43 @@ func (cs *CS) subscribeLocoListeners(config *LocoConfig) {
 	}
 }
 
+func (cs *CS) controlsLoco(locoName string) bool {
+	incl := false
+	for _, re := range cs.inclsRe {
+		if re.MatchString(locoName) {
+			incl = true
+			break
+		}
+	}
+	if incl {
+		for _, re := range cs.exclsRe {
+			if re.MatchString(locoName) {
+				incl = false
+				break
+			}
+		}
+	}
+	return incl
+}
+
 // AddLoco adds a loco via a loco configuration to the command station.
-func (cs *CS) AddLoco(config *LocoConfig) error {
+func (cs *CS) AddLoco(config *LocoConfig) (bool, error) {
 	if err := config.validate(); err != nil {
-		return err
+		return false, err
 	}
 
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
 	if _, ok := cs.locos[config.Name]; ok {
-		return fmt.Errorf("loco %s was already added", config.Name)
+		return false, fmt.Errorf("loco %s was already added", config.Name)
 	}
 	cs.locos[config.Name] = config
 
-	if config.CSName == cs.config.Name {
-		cs.subscribeLocoActions(config)
-	} else {
+	if !cs.controlsLoco(config.Name) {
 		cs.subscribeLocoListeners(config)
+		return false, nil
 	}
-	return nil
+	cs.subscribeLocoActions(config)
+	return true, nil
 }

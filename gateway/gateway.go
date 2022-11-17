@@ -194,12 +194,12 @@ type errorMsg struct {
 }
 
 func (gw *Gateway) publishError(topic string, err error) {
+	gw.logger.Printf("publish error: %s", err)
+
 	payload, err := json.Marshal(&errorMsg{Topic: topic, Error: err.Error()})
 	if err != nil {
 		panic(err) // should never happen
 	}
-
-	gw.logger.Printf("publish error: %v", payload)
 
 	publish := &paho.Publish{
 		QoS:     1, // QoS == 1

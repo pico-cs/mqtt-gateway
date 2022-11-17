@@ -74,11 +74,10 @@ func main() {
 	}
 	defer gw.Close()
 
-	i := 0
+	locoMap := map[string]string{}
+
 	for _, csConfig := range csConfigMap {
-
 		log.Printf("register central station %s", csConfig.Name)
-
 		cs, err := gateway.NewCS(csConfig, gw)
 		if err != nil {
 			log.Fatal(err)
@@ -86,17 +85,24 @@ func main() {
 		defer cs.Close()
 
 		for _, locoConfig := range locoConfigMap {
-			if i == 0 && locoConfig.CSName == "" { // no controlling command station defined -> use first one
-				locoConfig.CSName = csConfig.Name
-			}
 
-			log.Printf("add loco %s to central station %s", locoConfig.Name, csConfig.Name)
+			csName, ok := locoMap[locoConfig.Name]
 
-			if err := cs.AddLoco(locoConfig); err != nil {
+			controlsLoco, err := cs.AddLoco(locoConfig)
+			if err != nil {
 				log.Fatal(err)
 			}
+
+			if controlsLoco && ok {
+				log.Fatalf("loco %s is controlled by more than one central station %s, %s", locoConfig.Name, csConfig.Name, csName)
+			}
+
+			if controlsLoco {
+				log.Printf("added loco %s controlled by central station %s", locoConfig.Name, csConfig.Name)
+			} else {
+				log.Printf("added loco %s to central station %s", locoConfig.Name, csConfig.Name)
+			}
 		}
-		i++
 	}
 
 	sig := make(chan os.Signal, 1)

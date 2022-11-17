@@ -16,11 +16,11 @@ const (
 
 // Config represents configuration data for the gateway.
 type Config struct {
-	TopicRoot string `json:"topicRoot"`
-	Host      string `json:"host"`
-	Port      string `json:"port"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
+	TopicRoot string
+	Host      string
+	Port      string
+	Username  string
+	Password  string
 }
 
 func (c *Config) validate() error {
@@ -40,14 +40,27 @@ func (c *Config) port() string {
 func (c *Config) address() string { return net.JoinHostPort(c.Host, c.port()) }
 
 // CSConfig represents configuration data for a command station.
+// Name:
+// name of the command station
+// Host:
+// pico_w host in case of TCP/IP connection
+// Port:
+// port in case of TCP/IP connection (pico_w) or serial port for pico
+// Incls:
+// is an array of regular expressions defining which set of locos should be controlled by this command station
+// Excls:
+// is an array of regular expressions defining which set of locos should not be controlled by this command station
+// excluding regular expressions do have precedence over including regular expressions
 type CSConfig struct {
-	Name    string
-	Port    string `json:"port"`
-	Primary bool   `json:"primary"`
+	Name  string   `json:"name"`
+	Host  string   `json:"host"`
+	Port  string   `json:"port"`
+	Incls []string `json:"incls"`
+	Excls []string `json:"excls"`
 }
 
 func (c *CSConfig) String() string {
-	return fmt.Sprintf("name: %s post: %s, primary: %t", c.Name, c.Port, c.Primary)
+	return fmt.Sprintf("name %s host %s port %s, include %v, exclude %v", c.Name, c.Host, c.Port, c.Incls, c.Excls)
 }
 
 func (c *CSConfig) validate() error {
@@ -57,11 +70,12 @@ func (c *CSConfig) validate() error {
 	return nil
 }
 
-func (c *CSConfig) port() (string, error) {
-	if c.Port == "" {
-		return client.SerialDefaultPortName()
+func (c *CSConfig) conn() (client.Conn, error) {
+	if c.Host != "" { // TCP connection
+		return client.NewTCPClient(c.Host, c.Port)
 	}
-	return c.Port, nil
+	// serial connection
+	return client.NewSerial(c.Port)
 }
 
 // LocoFctConfig represents configuration data for a loco function.
@@ -71,10 +85,9 @@ type LocoFctConfig struct {
 
 // LocoConfig represents configuration data for a loco.
 type LocoConfig struct {
-	CSName string                   `json:"csName"`
-	Name   string                   `json:"name"`
-	Addr   uint                     `json:"addr"`
-	Fcts   map[string]LocoFctConfig `json:"fcts"`
+	Name string                   `json:"name"`
+	Addr uint                     `json:"addr"`
+	Fcts map[string]LocoFctConfig `json:"fcts"`
 }
 
 func (c *LocoConfig) validate() error {
