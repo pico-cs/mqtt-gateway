@@ -7,7 +7,7 @@ go 1.19
 
 require (
 	github.com/eclipse/paho.golang v0.10.0
-	github.com/pico-cs/go-client v0.1.10
+	github.com/pico-cs/go-client v0.1.11
 )
 
 require (
