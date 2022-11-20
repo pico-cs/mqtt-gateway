@@ -17,6 +17,8 @@ type CS struct {
 	locos   map[string]*LocoConfig
 	inclsRe []*regexp.Regexp
 	exclsRe []*regexp.Regexp
+	hndCh   chan *hndMsg
+	wg      *sync.WaitGroup
 }
 
 // NewCS returns a new command station instance.
@@ -30,7 +32,13 @@ func NewCS(config *CSConfig, gateway *Gateway) (*CS, error) {
 		return nil, err
 	}
 
-	cs := &CS{config: config, gateway: gateway, locos: make(map[string]*LocoConfig)}
+	cs := &CS{
+		config:  config,
+		gateway: gateway,
+		locos:   make(map[string]*LocoConfig),
+		hndCh:   make(chan *hndMsg, defChanSize),
+		wg:      new(sync.WaitGroup),
+	}
 
 	for _, incl := range config.Incls {
 		re, err := regexp.Compile(incl)
@@ -52,6 +60,9 @@ func NewCS(config *CSConfig, gateway *Gateway) (*CS, error) {
 
 	cs.subscribe()
 
+	// start go routine
+	go cs.handler(cs.wg, cs.hndCh, gateway.pubCh, gateway.errCh)
+
 	return cs, nil
 }
 
@@ -59,13 +70,28 @@ func (cs *CS) String() string { return cs.config.String() }
 
 // Close closes the command station and the underlying client connection.
 func (cs *CS) Close() error {
+	close(cs.hndCh)
+	cs.wg.Wait()
 	cs.unsubscribe()
 	return cs.client.Close()
 }
 
+func (cs *CS) handler(wg *sync.WaitGroup, hndCh <-chan *hndMsg, pubCh chan<- *pubMsg, errCh chan<- *errMsg) {
+	wg.Add(1)
+	defer wg.Done()
+
+	for msg := range hndCh {
+		if value, err := msg.fn(msg.value); err != nil {
+			errCh <- &errMsg{topic: msg.topic.String(), err: err}
+		} else {
+			pubCh <- &pubMsg{topic: msg.topic.noCommand(), value: value}
+		}
+	}
+}
+
 func (cs *CS) subscribe() {
-	cs.gateway.subscribe(cs, joinTopic("cs", cs.config.Name, "enabled", "get"), cs.getEnabled(cs.client))
-	cs.gateway.subscribe(cs, joinTopic("cs", cs.config.Name, "enabled", "set"), cs.setEnabled(cs.client))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("cs", cs.config.Name, "enabled", "get"), cs.getEnabled(cs.client))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("cs", cs.config.Name, "enabled", "set"), cs.setEnabled(cs.client))
 }
 
 func (cs *CS) unsubscribe() {
@@ -179,25 +205,25 @@ func (cs *CS) toggleLocoFct(client *client.Client, addr, no uint) hndFn {
 
 // subscribeLocoActions subscribes to loco actions for a loco controlled by this command station.
 func (cs *CS) subscribeLocoActions(config *LocoConfig) {
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir", "get"), cs.getLocoDir(cs.client, config.Addr))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir", "set"), cs.setLocoDir(cs.client, config.Addr, true))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir", "toggle"), cs.toggleLocoDir(cs.client, config.Addr))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed", "get"), cs.getLocoSpeed(cs.client, config.Addr))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed", "set"), cs.setLocoSpeed(cs.client, config.Addr, true))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed", "stop"), cs.stopLoco(cs.client, config.Addr))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, "dir", "get"), cs.getLocoDir(cs.client, config.Addr))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, "dir", "set"), cs.setLocoDir(cs.client, config.Addr, true))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, "dir", "toggle"), cs.toggleLocoDir(cs.client, config.Addr))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, "speed", "get"), cs.getLocoSpeed(cs.client, config.Addr))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, "speed", "set"), cs.setLocoSpeed(cs.client, config.Addr, true))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, "speed", "stop"), cs.stopLoco(cs.client, config.Addr))
 	for name, locoConfig := range config.Fcts {
-		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name, "get"), cs.getLocoFct(cs.client, config.Addr, locoConfig.No))
-		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name, "set"), cs.setLocoFct(cs.client, config.Addr, locoConfig.No, true))
-		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name, "toggle"), cs.toggleLocoFct(cs.client, config.Addr, locoConfig.No))
+		cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, name, "get"), cs.getLocoFct(cs.client, config.Addr, locoConfig.No))
+		cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, name, "set"), cs.setLocoFct(cs.client, config.Addr, locoConfig.No, true))
+		cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, name, "toggle"), cs.toggleLocoFct(cs.client, config.Addr, locoConfig.No))
 	}
 }
 
 // subscribeLocoListeners subscribes to loco listeners for a loco not controlled by this command station.
 func (cs *CS) subscribeLocoListeners(config *LocoConfig) {
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "dir"), cs.setLocoDir(cs.client, config.Addr, false))
-	cs.gateway.subscribe(cs, joinTopic("loco", config.Name, "speed"), cs.setLocoSpeed(cs.client, config.Addr, false))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, "dir"), cs.setLocoDir(cs.client, config.Addr, false))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, "speed"), cs.setLocoSpeed(cs.client, config.Addr, false))
 	for name, locoConfig := range config.Fcts {
-		cs.gateway.subscribe(cs, joinTopic("loco", config.Name, name), cs.setLocoFct(cs.client, config.Addr, locoConfig.No, false))
+		cs.gateway.subscribe(cs.hndCh, cs, joinTopic("loco", config.Name, name), cs.setLocoFct(cs.client, config.Addr, locoConfig.No, false))
 	}
 }
 

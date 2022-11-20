@@ -58,6 +58,8 @@ func splitTopic(topic string) []string { return strings.Split(topic, topicSep) }
 
 type topic []string
 
+func (t topic) String() string { return joinTopic(t...) }
+
 // noRoot returns topic without root part.
 func (t topic) noRoot() string {
 	return joinTopic(t[1:]...)

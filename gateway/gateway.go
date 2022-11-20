@@ -14,11 +14,30 @@ import (
 	"github.com/eclipse/paho.golang/paho"
 )
 
+const defChanSize = 100
+
 type hndFn func(payload any) (any, error)
+
+type pubMsg struct {
+	topic string
+	value any
+}
+
+type errMsg struct {
+	topic string
+	err   error
+}
+
+type hndMsg struct {
+	topic topic
+	fn    hndFn
+	value any
+}
 
 type subscription struct {
 	owner any
 	fn    hndFn
+	hndCh chan<- *hndMsg
 }
 
 // Gateway represents a MQTT broker gateway.
@@ -33,6 +52,10 @@ type Gateway struct {
 	errorTopic string
 
 	logger *log.Logger
+
+	pubCh chan *pubMsg
+	errCh chan *errMsg
+	wg    *sync.WaitGroup
 }
 
 // New returns a new gateway instance.
@@ -47,6 +70,9 @@ func New(config *Config) (*Gateway, error) {
 		subTopic:      joinTopic(config.TopicRoot, multiLevel),
 		errorTopic:    joinTopic(config.TopicRoot, classError),
 		logger:        log.New(os.Stderr, "", log.LstdFlags),
+		pubCh:         make(chan *pubMsg, defChanSize),
+		errCh:         make(chan *errMsg, defChanSize),
+		wg:            new(sync.WaitGroup),
 	}
 
 	pahoConfig := autopaho.ClientConfig{
@@ -78,12 +104,21 @@ func New(config *Config) (*Gateway, error) {
 	if err := gw.subscribeBroker(); err != nil {
 		return nil, err
 	}
-	gw.logger.Printf("connect to broker %s", config.address())
+	gw.logger.Printf("connected to broker %s", config.address())
+
+	// start go routines
+	go gw.publish(gw.wg, gw.pubCh, gw.errCh)
+	go gw.publishError(gw.wg, gw.errCh)
+
 	return gw, nil
 }
 
 // Close closes the gateway and the MQTT connection.
 func (gw *Gateway) Close() error {
+	gw.logger.Println("shutdown gateway...")
+	close(gw.pubCh)
+	close(gw.errCh)
+	gw.wg.Wait()
 	gw.logger.Printf("disconnect from broker %s", gw.config.address())
 	gw.unsubscribeBroker() // ignore error
 	return gw.connectionManager.Disconnect(context.Background())
@@ -113,10 +148,10 @@ func (gw *Gateway) unsubscribeBroker() error {
 	return nil
 }
 
-func (gw *Gateway) subscribe(owner any, topic string, fn hndFn) {
+func (gw *Gateway) subscribe(hndCh chan<- *hndMsg, owner any, topic string, fn hndFn) {
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
-	gw.subscriptions[topic] = append(gw.subscriptions[topic], subscription{owner: owner, fn: fn})
+	gw.subscriptions[topic] = append(gw.subscriptions[topic], subscription{owner: owner, fn: fn, hndCh: hndCh})
 }
 
 func (gw *Gateway) unsubscribe(owner any, topic string) {
@@ -135,7 +170,7 @@ func (gw *Gateway) unsubscribe(owner any, topic string) {
 func (gw *Gateway) handler(p *paho.Publish) {
 	topic, err := parseTopic(p.Topic)
 	if err != nil {
-		gw.publishError(p.Topic, err)
+		gw.errCh <- &errMsg{topic: p.Topic, err: err}
 		return
 	}
 
@@ -147,69 +182,78 @@ func (gw *Gateway) handler(p *paho.Publish) {
 		return // nothing to do
 	}
 
-	var payload any
-	if err := json.Unmarshal(p.Payload, &payload); err != nil {
-		gw.publishError(p.Topic, err)
+	var value any
+	if err := json.Unmarshal(p.Payload, &value); err != nil {
+		gw.errCh <- &errMsg{topic: p.Topic, err: err}
 		return
 	}
+
 	// log.Printf("unmarshall payload %[1]v %[1]s value %[2]T %[2]v\n", p.Payload, payload)
 
 	for _, subscription := range subscriptions {
-		if reply, err := subscription.fn(payload); err != nil {
-			gw.publishError(p.Topic, err)
-		} else {
-			gw.publish(topic.noCommand(), reply)
+		subscription.hndCh <- &hndMsg{topic: topic, fn: subscription.fn, value: value}
+	}
+}
+
+func (gw *Gateway) publish(wg *sync.WaitGroup, pubCh <-chan *pubMsg, errCh chan<- *errMsg) {
+	wg.Add(1)
+	defer wg.Done()
+
+	for msg := range pubCh {
+		if msg.value == nil {
+			continue // nothing to publish
+		}
+
+		gw.logger.Printf("publish: topic %s value %v", msg.topic, msg.value)
+
+		payload, err := json.Marshal(msg.value)
+		if err != nil {
+			errCh <- &errMsg{topic: msg.topic, err: err}
+			continue
+		}
+
+		publish := &paho.Publish{
+			QoS:     1,    // QoS == 1
+			Retain:  true, // retain msg, so that new joiners will get the latest message
+			Topic:   msg.topic,
+			Payload: payload,
+		}
+
+		if _, err := gw.connectionManager.Publish(context.Background(), publish); err != nil {
+			errCh <- &errMsg{topic: msg.topic, err: err}
 		}
 	}
 }
 
-func (gw *Gateway) publish(topic string, reply any) {
-	if reply == nil {
-		return // nothing to publish
-	}
-
-	gw.logger.Printf("publish: topic %s value %v", topic, reply)
-
-	payload, err := json.Marshal(reply)
-	if err != nil {
-		gw.publishError(topic, err)
-		return
-	}
-
-	publish := &paho.Publish{
-		QoS:     1,    // QoS == 1
-		Retain:  true, // retain msg, so that new joiners will get the latest message
-		Topic:   topic,
-		Payload: payload,
-	}
-
-	if _, err := gw.connectionManager.Publish(context.Background(), publish); err != nil {
-		gw.publishError(topic, err)
-	}
-}
-
-type errorMsg struct {
+type errPayload struct {
 	Topic string `json:"topic"`
 	Error string `json:"error"`
 }
 
-func (gw *Gateway) publishError(topic string, err error) {
-	gw.logger.Printf("publish error: %s", err)
+func (gw *Gateway) publishError(wg *sync.WaitGroup, errCh <-chan *errMsg) {
+	wg.Add(1)
+	defer wg.Done()
 
-	payload, err := json.Marshal(&errorMsg{Topic: topic, Error: err.Error()})
-	if err != nil {
-		panic(err) // should never happen
-	}
+	for msg := range errCh {
 
-	publish := &paho.Publish{
-		QoS:     1, // QoS == 1
-		Retain:  false,
-		Topic:   gw.errorTopic,
-		Payload: payload,
-	}
+		gw.logger.Printf("publish error: %s", msg.err)
 
-	if _, err := gw.connectionManager.Publish(context.Background(), publish); err != nil {
-		// hm, we can only log...
-		gw.logger.Printf("publish error: topic %s text %s", topic, err)
+		payload, err := json.Marshal(&errPayload{Topic: msg.topic, Error: msg.err.Error()})
+		if err != nil {
+			// hm, we can only log...
+			gw.logger.Printf("publish error: topic %s err %s", msg.topic, err)
+		}
+
+		publish := &paho.Publish{
+			QoS:     1, // QoS == 1
+			Retain:  false,
+			Topic:   gw.errorTopic,
+			Payload: payload,
+		}
+
+		if _, err := gw.connectionManager.Publish(context.Background(), publish); err != nil {
+			// hm, we can only log...
+			gw.logger.Printf("publish error: topic %s error %s", msg.topic, err)
+		}
 	}
 }
