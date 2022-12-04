@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
 
@@ -53,23 +52,11 @@ func (c *Config) address() string { return net.JoinHostPort(c.Host, c.port()) }
 // is an array of regular expressions defining which set of locos should not be controlled by this command station
 // excluding regular expressions do have precedence over including regular expressions
 type CSConfig struct {
-	Name  string   `json:"name"`
-	Host  string   `json:"host"`
-	Port  string   `json:"port"`
-	Incls []string `json:"incls"`
-	Excls []string `json:"excls"`
-}
-
-// NewCSConfig decodes a JSON buffer and returns a new command station configuration.
-func NewCSConfig(filename string, b []byte) (*CSConfig, error) {
-	c := new(CSConfig)
-	if err := json.Unmarshal(b, c); err != nil {
-		return nil, err
-	}
-	if c.Name == "" {
-		c.Name = filename
-	}
-	return c, nil
+	Name  string
+	Host  string
+	Port  string
+	Incls []string
+	Excls []string
 }
 
 func (c *CSConfig) String() string {
@@ -93,26 +80,14 @@ func (c *CSConfig) conn() (client.Conn, error) {
 
 // LocoFctConfig represents configuration data for a loco function.
 type LocoFctConfig struct {
-	No uint `json:"no"`
+	No uint
 }
 
 // LocoConfig represents configuration data for a loco.
 type LocoConfig struct {
-	Name string                   `json:"name"`
-	Addr uint                     `json:"addr"`
-	Fcts map[string]LocoFctConfig `json:"fcts"`
-}
-
-// NewLocoConfig decodes a JSON buffer and returns a new loco configuration.
-func NewLocoConfig(filename string, b []byte) (*LocoConfig, error) {
-	c := new(LocoConfig)
-	if err := json.Unmarshal(b, c); err != nil {
-		return nil, err
-	}
-	if c.Name == "" {
-		c.Name = filename
-	}
-	return c, nil
+	Name string
+	Addr uint
+	Fcts map[string]LocoFctConfig
 }
 
 func (c *LocoConfig) validate() error {

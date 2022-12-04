@@ -1,19 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"embed"
-	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/pico-cs/mqtt-gateway/gateway"
+	"golang.org/x/exp/slices"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed config/*
@@ -31,7 +33,7 @@ const (
 	envPassword  = "Password"
 )
 
-const extJSON = ".json"
+var jamlExts = []string{".yaml", ".yml"}
 
 func lookupEnv(name, defVal string) string {
 	if val, ok := os.LookupEnv(name); ok {
@@ -40,19 +42,13 @@ func lookupEnv(name, defVal string) string {
 	return defVal
 }
 
-func splitNameExt(fn string) (string, string) {
-	ext := filepath.Ext(fn)
-	name := fn[:len(fn)-len(ext)]
-	return strings.ToLower(name), strings.ToLower(ext) // not case sensitive
-}
-
-func loadConfig(fsys fs.FS, path string, fn func(filename string, b []byte) (bool, error)) {
-	fs.WalkDir(fsys, path, func(subPath string, d fs.DirEntry, err error) error {
+func loadConfig(fsys fs.FS, path string, fn func(b []byte) error) error {
+	return fs.WalkDir(fsys, path, func(subPath string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		filename, ext := splitNameExt(d.Name())
-		if ext != extJSON {
+
+		if !slices.Contains(jamlExts, filepath.Ext(d.Name())) {
 			log.Printf("...skipped %s", subPath)
 			return nil
 		}
@@ -63,16 +59,13 @@ func loadConfig(fsys fs.FS, path string, fn func(filename string, b []byte) (boo
 			return nil
 		}
 
-		overwrite, err := fn(filename, b)
-		switch {
-		case err != nil:
+		err = fn(b)
+		if err != nil {
 			log.Printf("...error loading %s: %s", subPath, err)
-		case overwrite:
-			log.Printf("...loaded %s as %s (overwrite)", subPath, filename)
-		default:
-			log.Printf("...loaded %s as %s", subPath, filename)
+		} else {
+			log.Printf("...loaded %s", subPath)
 		}
-		return nil
+		return err
 	})
 }
 
@@ -88,32 +81,86 @@ func newConfigs() *configs {
 	}
 }
 
-func (c *configs) addConfig(filename string, b []byte) (bool, error) {
-	var m map[string]any
-
-	if err := json.Unmarshal(b, &m); err != nil {
-		return false, err
-	}
-
+func isCSConfig(m map[string]any) bool {
 	if _, ok := m["host"]; ok {
-		csConfig, err := gateway.NewCSConfig(filename, b)
-		if err != nil {
-			return false, err
-		}
-		_, ok := c.csConfigMap[csConfig.Name]
-		c.csConfigMap[csConfig.Name] = csConfig
-		return ok, nil
+		return true
 	}
+	if _, ok := m["port"]; ok {
+		return true
+	}
+	return false
+}
+
+func isLocoConfig(m map[string]any) bool {
 	if _, ok := m["addr"]; ok {
-		locoConfig, err := gateway.NewLocoConfig(filename, b)
-		if err != nil {
-			return false, err
-		}
-		_, ok := c.locoConfigMap[locoConfig.Name]
-		c.locoConfigMap[locoConfig.Name] = locoConfig
-		return ok, nil
+		return true
 	}
-	return false, fmt.Errorf("invalid configuration: %s", b)
+	return false
+}
+
+const (
+	cfgCS = 1 << iota
+	cfgLoco
+)
+
+func (c *configs) checkName(name string) byte {
+	flags := byte(0)
+	if _, ok := c.csConfigMap[name]; ok {
+		flags |= cfgCS
+	}
+	if _, ok := c.locoConfigMap[name]; ok {
+		flags |= cfgLoco
+	}
+	return flags
+}
+
+func (c *configs) parseYaml(b []byte) error {
+	cd := yaml.NewDecoder(bytes.NewBuffer(b))
+	dd := yaml.NewDecoder(bytes.NewBuffer(b))
+
+	for {
+		var m map[string]any
+
+		err := cd.Decode(&m)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		if _, ok := m["name"]; !ok {
+			return fmt.Errorf("invalid document %v - name missing", m)
+		}
+
+		switch {
+
+		case isCSConfig(m):
+			var csConfig gateway.CSConfig
+			if err := dd.Decode(&csConfig); err != nil {
+				return err
+			}
+			flags := c.checkName(csConfig.Name)
+			if flags&cfgLoco != 0 {
+				return fmt.Errorf("invalid command station name %s - already used for loco", csConfig.Name)
+			}
+			c.csConfigMap[csConfig.Name] = &csConfig
+
+		case isLocoConfig(m):
+			var locoConfig gateway.LocoConfig
+			if err := dd.Decode(&locoConfig); err != nil {
+				return err
+			}
+			flags := c.checkName(locoConfig.Name)
+			if flags&cfgCS != 0 {
+				return fmt.Errorf("invalid loco name %s - already used for command station", locoConfig.Name)
+			}
+
+		default:
+			return fmt.Errorf("invalid configuration %v", m)
+		}
+	}
+	return nil
 }
 
 func main() {
@@ -132,12 +179,16 @@ func main() {
 	flag.Parse()
 
 	log.Printf("load embedded configuration files")
-	loadConfig(embedFsys, embedConfigDir, configs.addConfig)
+	if err := loadConfig(embedFsys, embedConfigDir, configs.parseYaml); err != nil {
+		os.Exit(1)
+	}
 
 	if *externConfigDir != "" {
 		log.Printf("load external configuration files at %s", *externConfigDir)
 		externFsys := os.DirFS(*externConfigDir)
-		loadConfig(externFsys, "", configs.addConfig)
+		if err := loadConfig(externFsys, ".", configs.parseYaml); err != nil {
+			os.Exit(1)
+		}
 	}
 
 	gw, err := gateway.New(config)
