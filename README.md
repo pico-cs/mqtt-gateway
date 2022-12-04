@@ -12,7 +12,7 @@ mqtt-gateway connects pico-cs command stations to a MQTT broker.
 A model railroad can be seen as a set of [IoT](https://en.wikipedia.org/wiki/Internet_of_things) devices and [MQTT](https://mqtt.org/) is one of the standard protocols in this space.
 
 ### IoT integration
-While the [pico-cs](https://github.com/pico-cs) [firmware](https://github.com/pico-cs/firmware) can be simply installed on a [Raspberry Pi Pico](https://www.raspberrypi.com/products/raspberry-pi-pico/) and used as a DCC command station whether by controlling it over a serial monitor or via serial over USB or WiFi with the help of a client library (e.g [Go client](https://github.com/pico-cs/go-client)) using a IoT standard protocol like MQTT provides unprecedented opportunities in integrating pico-cs command stations into an IoT (software) infrastructure. And just to name two well known examples with MQTT support:
+While the [pico-cs](https://github.com/pico-cs) [firmware](https://github.com/pico-cs/firmware) can be simply installed on a [Raspberry Pi Pico](https://www.raspberrypi.com/products/raspberry-pi-pico/) and used as a DCC command station whether by controlling it over a serial monitor or via serial over USB or WiFi with the help of a client library (e.g. [Go client](https://github.com/pico-cs/go-client)). But using an IoT standard protocol like MQTT provides unprecedented opportunities in integrating pico-cs command stations into an IoT (software) infrastructure. And just to name two well known examples with MQTT support:
 - [Node-RED](https://nodered.org/)
 - [Home Assistant](https://www.home-assistant.io/) which comes with a [MQTT broker option](https://www.home-assistant.io/integrations/mqtt/)
 
@@ -41,7 +41,7 @@ git clone https://github.com/pico-cs/mqtt-gateway.git
 cd mqtt-gateway/cmd/gateway
 go build
 ```
-Beside building the gateway executable for the local operation system and hardware architecture Go supports 'cross compiling' for many target OS and hardware architecture combinations (for details please consult the excellent [Go documention](https://go.dev/doc/)).
+Beside building the gateway executable for the local operating system and hardware architecture Go supports 'cross compiling' for many target OS and hardware architecture combinations (for details please consult the excellent [Go documention](https://go.dev/doc/)).
 
 Example building executable for Raspberry Pi on Raspberry Pi OS
 ```
