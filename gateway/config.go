@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 
@@ -59,6 +60,18 @@ type CSConfig struct {
 	Excls []string `json:"excls"`
 }
 
+// NewCSConfig decodes a JSON buffer and returns a new command station configuration.
+func NewCSConfig(filename string, b []byte) (*CSConfig, error) {
+	c := new(CSConfig)
+	if err := json.Unmarshal(b, c); err != nil {
+		return nil, err
+	}
+	if c.Name == "" {
+		c.Name = filename
+	}
+	return c, nil
+}
+
 func (c *CSConfig) String() string {
 	return fmt.Sprintf("name %s host %s port %s, include %v, exclude %v", c.Name, c.Host, c.Port, c.Incls, c.Excls)
 }
@@ -88,6 +101,18 @@ type LocoConfig struct {
 	Name string                   `json:"name"`
 	Addr uint                     `json:"addr"`
 	Fcts map[string]LocoFctConfig `json:"fcts"`
+}
+
+// NewLocoConfig decodes a JSON buffer and returns a new loco configuration.
+func NewLocoConfig(filename string, b []byte) (*LocoConfig, error) {
+	c := new(LocoConfig)
+	if err := json.Unmarshal(b, c); err != nil {
+		return nil, err
+	}
+	if c.Name == "" {
+		c.Name = filename
+	}
+	return c, nil
 }
 
 func (c *LocoConfig) validate() error {

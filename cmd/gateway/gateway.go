@@ -2,11 +2,15 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"flag"
+	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/pico-cs/mqtt-gateway/gateway"
@@ -27,11 +31,7 @@ const (
 	envPassword  = "Password"
 )
 
-const (
-	csPath   = "cs"
-	locoPath = "loco"
-	extJSON  = ".json"
-)
+const extJSON = ".json"
 
 func lookupEnv(name, defVal string) string {
 	if val, ok := os.LookupEnv(name); ok {
@@ -40,9 +40,86 @@ func lookupEnv(name, defVal string) string {
 	return defVal
 }
 
+func splitNameExt(fn string) (string, string) {
+	ext := filepath.Ext(fn)
+	name := fn[:len(fn)-len(ext)]
+	return strings.ToLower(name), strings.ToLower(ext) // not case sensitive
+}
+
+func loadConfig(fsys fs.FS, path string, fn func(filename string, b []byte) (bool, error)) {
+	fs.WalkDir(fsys, path, func(subPath string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		filename, ext := splitNameExt(d.Name())
+		if ext != extJSON {
+			log.Printf("...skipped %s", subPath)
+			return nil
+		}
+
+		b, err := fs.ReadFile(fsys, subPath)
+		if err != nil {
+			log.Printf("...%s %s", subPath, err)
+			return nil
+		}
+
+		overwrite, err := fn(filename, b)
+		switch {
+		case err != nil:
+			log.Printf("...error loading %s: %s", subPath, err)
+		case overwrite:
+			log.Printf("...loaded %s as %s (overwrite)", subPath, filename)
+		default:
+			log.Printf("...loaded %s as %s", subPath, filename)
+		}
+		return nil
+	})
+}
+
+type configs struct {
+	csConfigMap   map[string]*gateway.CSConfig
+	locoConfigMap map[string]*gateway.LocoConfig
+}
+
+func newConfigs() *configs {
+	return &configs{
+		csConfigMap:   map[string]*gateway.CSConfig{},
+		locoConfigMap: map[string]*gateway.LocoConfig{},
+	}
+}
+
+func (c *configs) addConfig(filename string, b []byte) (bool, error) {
+	var m map[string]any
+
+	if err := json.Unmarshal(b, &m); err != nil {
+		return false, err
+	}
+
+	if _, ok := m["host"]; ok {
+		csConfig, err := gateway.NewCSConfig(filename, b)
+		if err != nil {
+			return false, err
+		}
+		_, ok := c.csConfigMap[csConfig.Name]
+		c.csConfigMap[csConfig.Name] = csConfig
+		return ok, nil
+	}
+	if _, ok := m["addr"]; ok {
+		locoConfig, err := gateway.NewLocoConfig(filename, b)
+		if err != nil {
+			return false, err
+		}
+		_, ok := c.locoConfigMap[locoConfig.Name]
+		c.locoConfigMap[locoConfig.Name] = locoConfig
+		return ok, nil
+	}
+	return false, fmt.Errorf("invalid configuration: %s", b)
+}
+
 func main() {
 
 	config := &gateway.Config{}
+	configs := newConfigs()
 
 	flag.StringVar(&config.TopicRoot, "topicRoot", lookupEnv(envTopicRoot, gateway.DefaultTopicRoot), "topic root")
 	flag.StringVar(&config.Host, "host", lookupEnv(envHost, gateway.DefaultHost), "MQTT host")
@@ -54,18 +131,13 @@ func main() {
 
 	flag.Parse()
 
-	csConfigMap := make(map[string]*gateway.CSConfig)
-	locoConfigMap := make(map[string]*gateway.LocoConfig)
-
 	log.Printf("load embedded configuration files")
-	loadCSConfigMap(csConfigMap, embedFsys, filepath.Join(embedConfigDir, csPath))
-	loadLocoConfigMap(locoConfigMap, embedFsys, filepath.Join(embedConfigDir, locoPath))
+	loadConfig(embedFsys, embedConfigDir, configs.addConfig)
 
 	if *externConfigDir != "" {
 		log.Printf("load external configuration files at %s", *externConfigDir)
 		externFsys := os.DirFS(*externConfigDir)
-		loadCSConfigMap(csConfigMap, externFsys, csPath)
-		loadLocoConfigMap(locoConfigMap, externFsys, locoPath)
+		loadConfig(externFsys, "", configs.addConfig)
 	}
 
 	gw, err := gateway.New(config)
@@ -76,7 +148,7 @@ func main() {
 
 	locoMap := map[string]string{}
 
-	for _, csConfig := range csConfigMap {
+	for _, csConfig := range configs.csConfigMap {
 		log.Printf("register central station %s", csConfig.Name)
 		cs, err := gateway.NewCS(csConfig, gw)
 		if err != nil {
@@ -84,7 +156,7 @@ func main() {
 		}
 		defer cs.Close()
 
-		for _, locoConfig := range locoConfigMap {
+		for _, locoConfig := range configs.locoConfigMap {
 
 			csName, ok := locoMap[locoConfig.Name]
 
