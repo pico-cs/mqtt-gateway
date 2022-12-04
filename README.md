@@ -80,11 +80,11 @@ Usage of ./gateway:
 ...todo
 
 ### Configuration files
-To configure the gatewway's command station and loco parameters [YAML files](https://yaml.org/) are used. The entire configuration can be stored in one file or in multiple files. During the start of the gateway the configuration directory (parameter configDir) and it's subdirectories are scanned for valid configuration files with file extension '.yaml' or '.yml'. The directory tree scan is a depth-first search and within a directory the files are visited in a lexical order. If a configuration for an object is found more than once the last one wins.
+To configure the gateway's command station and loco parameters [YAML files](https://yaml.org/) are used. The entire configuration can be stored in one file or in multiple files. During the start of the gateway the configuration directory (parameter configDir) and it's subdirectories are scanned for valid configuration files with file extension '.yaml' or '.yml'. The directory tree scan is a depth-first search and within a directory the files are visited in a lexical order. If a configuration for an object is found more than once the last one wins.
 
 Each object needs to define a name. As the object name is part of the [MQTT topic](#mqtt-topics) it must fullfil the following conditions:
 - consist of valid MQTT topic characters and
-- must not contain charecter "/", "+" or "#"
+- must not contain characters "/", "+" or "#"
 
 As the MQTT topics used by the gateway do have a common namespace for all objects an object name must be unique, meaning for example that a command station name cannot be used as a loco name.
 All conditions are checked by the gateway on start and in case of a violation the program prints the respective error message and stops execution.
@@ -93,7 +93,8 @@ All conditions are checked by the gateway on start and in case of a violation th
 Beside using a configuration directory the configuration files can be embedded in the gateway executable:
 - store them in as part of the source code directory at mqtt-gateway/cmd/gateway/config and
 - build the binary 
-This is the prefered method using a static or default configuration. During the gateway start the embeeded configuration files are scanned before the 'external' configuration files (configDir parameter) are scanned, so an external configuration of an object would overwrite an embedded one.
+
+This is the prefered method using a static or default configuration. During the gateway start the embedded configuration files are scanned before the 'external' configuration files (configDir parameter), so an external object configuration would overwrite an embedded one.
 
 ### Configuration examples
 ...todo
