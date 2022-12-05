@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/pico-cs/go-client/client"
+	"golang.org/x/exp/slices"
 )
 
 // Default values.
@@ -16,11 +17,16 @@ const (
 
 // Config represents configuration data for the gateway.
 type Config struct {
+	// root part of all gateway MQTT topics
 	TopicRoot string
-	Host      string
-	Port      string
-	Username  string
-	Password  string
+	// MQTT broker host
+	Host string
+	// MQTT broker port
+	Port string
+	// MQTT authentication username
+	Username string
+	// MQTT authentication password
+	Password string
 }
 
 func (c *Config) validate() error {
@@ -40,23 +46,20 @@ func (c *Config) port() string {
 func (c *Config) address() string { return net.JoinHostPort(c.Host, c.port()) }
 
 // CSConfig represents configuration data for a command station.
-// Name:
-// name of the command station
-// Host:
-// pico_w host in case of TCP/IP connection
-// Port:
-// port in case of TCP/IP connection (pico_w) or serial port for pico
-// Incls:
-// is an array of regular expressions defining which set of locos should be controlled by this command station
-// Excls:
-// is an array of regular expressions defining which set of locos should not be controlled by this command station
-// excluding regular expressions do have precedence over including regular expressions
 type CSConfig struct {
-	Name  string
-	Host  string
-	Port  string
+	// command station name (used in topic)
+	Name string
+	// pico_w host in case of WiFi TCP/IP connection
+	Host string
+	// TCP/IP port (WiFi) or serial port (serial over USB)
+	Port string
+	// list of regular expressions defining which set of objects should be controlled by this command station
+	// as the primary command station
 	Incls []string
-	Excls []string
+	// list of regular expressions defining which set of objects should be controlled by this command station
+	// as a secondary command station
+	// excluding regular expressions do have precedence over including regular expressions
+	Excls []string // List of regular expressions defining
 }
 
 func (c *CSConfig) String() string {
@@ -80,19 +83,31 @@ func (c *CSConfig) conn() (client.Conn, error) {
 
 // LocoFctConfig represents configuration data for a loco function.
 type LocoFctConfig struct {
+	// loco decoder function number
 	No uint
 }
 
 // LocoConfig represents configuration data for a loco.
 type LocoConfig struct {
+	// loco name (used in topic)
 	Name string
+	// loco decoder address
 	Addr uint
+	// loco function mapping (key is used in topic)
 	Fcts map[string]LocoFctConfig
 }
+
+// ReservedFctNames is the list of reserved function names which cannot be used in loco configurations.
+var ReservedFctNames = []string{"dir", "speed"}
 
 func (c *LocoConfig) validate() error {
 	if err := checkTopicLevelName(c.Name); err != nil {
 		return fmt.Errorf("LocoConfig name %s: %s", c.Name, err)
+	}
+	for name := range c.Fcts {
+		if slices.Contains(ReservedFctNames, name) {
+			return fmt.Errorf("LocoConfig name %s: function name %s is reserved", c.Name, name)
+		}
 	}
 	return nil
 }

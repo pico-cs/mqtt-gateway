@@ -98,22 +98,6 @@ func isLocoConfig(m map[string]any) bool {
 	return false
 }
 
-const (
-	cfgCS = 1 << iota
-	cfgLoco
-)
-
-func (c *configs) checkName(name string) byte {
-	flags := byte(0)
-	if _, ok := c.csConfigMap[name]; ok {
-		flags |= cfgCS
-	}
-	if _, ok := c.locoConfigMap[name]; ok {
-		flags |= cfgLoco
-	}
-	return flags
-}
-
 func (c *configs) parseYaml(b []byte) error {
 	cd := yaml.NewDecoder(bytes.NewBuffer(b))
 	dd := yaml.NewDecoder(bytes.NewBuffer(b))
@@ -140,10 +124,6 @@ func (c *configs) parseYaml(b []byte) error {
 			if err := dd.Decode(&csConfig); err != nil {
 				return err
 			}
-			flags := c.checkName(csConfig.Name)
-			if flags&cfgLoco != 0 {
-				return fmt.Errorf("invalid command station name %s - already used for loco", csConfig.Name)
-			}
 			c.csConfigMap[csConfig.Name] = &csConfig
 
 		case isLocoConfig(m):
@@ -151,10 +131,7 @@ func (c *configs) parseYaml(b []byte) error {
 			if err := dd.Decode(&locoConfig); err != nil {
 				return err
 			}
-			flags := c.checkName(locoConfig.Name)
-			if flags&cfgCS != 0 {
-				return fmt.Errorf("invalid loco name %s - already used for command station", locoConfig.Name)
-			}
+			c.locoConfigMap[locoConfig.Name] = &locoConfig
 
 		default:
 			return fmt.Errorf("invalid configuration %v", m)

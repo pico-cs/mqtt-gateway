@@ -86,7 +86,6 @@ Each object needs to define a name. As the object name is part of the [MQTT topi
 - consist of valid MQTT topic characters and
 - must not contain characters "/", "+" or "#"
 
-As the MQTT topics used by the gateway do have a common namespace for all objects an object name must be unique, meaning for example that a command station name cannot be used as a loco name.
 All conditions are checked by the gateway on start and in case of a violation the program prints the respective error message and stops execution.
 
 ### Embedded configuration files
@@ -100,9 +99,19 @@ This is the prefered method using a static or default configuration. During the 
 ...todo
 
 ## MQTT topics
-...todo
+In MQTT a topic is a string the MQTT broker uses to determine which messages should be send to each of the connected clients. The client uses a topic to publish a message and uses topics to subscribe to messages it would like to receive from the broker.
+A topic can consist of more than one level - the character used to separate levels is '/'. A client might use wildcards when subscribing to topics, where '+' is the wildcard character for a dedicated level and '#' is the multi level wildcard character which can only be used as the last level of a topic. For further details about MQTT topics please see the [MQTT specification](https://mqtt.org/mqtt-specification/).
+
+The topic schema used by the gateway:
+
+```
+"<topic root>/<object type>/<object name>/<property>[/<command>]"
+```
+
+The message payload is whether a json encoded atomic field (aka string, number, boolean) or a json encoded object.
+
+Please see [mqtt](mqtt.md) for information about the topics and message payloads used by the gateway.
 
 ## Licensing
 
 Copyright 2021-2022 Stefan Miller and pico-cs contributers. Please see our [LICENSE](LICENSE.md) for copyright and license information. Detailed information including third-party components and their licensing/copyright information is available [via the REUSE tool](https://api.reuse.software/info/github.com/pico-cs/mqtt-gateway).
-
