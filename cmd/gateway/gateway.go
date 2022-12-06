@@ -35,8 +35,11 @@ func lookupEnv(name, defVal string) string {
 
 func main() {
 
+	logger := log.New(os.Stderr, "gateway", log.LstdFlags)
+
 	config := &gateway.Config{}
-	configSet := newConfigSet()
+	configSet := newConfigSet(logger)
+	defer configSet.close()
 
 	flag.StringVar(&config.TopicRoot, "topicRoot", lookupEnv(envTopicRoot, gateway.DefaultTopicRoot), "topic root")
 	flag.StringVar(&config.Host, "host", lookupEnv(envHost, gateway.DefaultHost), "MQTT host")
@@ -48,56 +51,27 @@ func main() {
 
 	flag.Parse()
 
-	log.Printf("load embedded configuration files")
+	logger.Printf("load embedded configuration files")
 	if err := configSet.load(embedFsys, embedConfigDir); err != nil {
-		os.Exit(1)
+		logger.Fatal(err)
 	}
 
 	if *externConfigDir != "" {
-		log.Printf("load external configuration files at %s", *externConfigDir)
+		logger.Printf("load external configuration files at %s", *externConfigDir)
 		externFsys := os.DirFS(*externConfigDir)
 		if err := configSet.load(externFsys, "."); err != nil {
-			os.Exit(1)
+			logger.Fatal(err)
 		}
 	}
 
 	gw, err := gateway.New(config)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 	defer gw.Close()
 
-	locoMap := map[string]string{}
-
-	for csName, csConfig := range configSet.csConfigMap {
-		log.Printf("register central station %s", csName)
-		cs, err := gateway.NewCS(csConfig, gw)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer cs.Close()
-
-		for locoName, locoConfig := range configSet.locoConfigMap {
-
-			csAssignedName, ok := locoMap[locoName]
-
-			controlsLoco, err := cs.AddLoco(locoConfig)
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			if controlsLoco && ok {
-				log.Fatalf("loco %s is controlled by more than one central station %s, %s", locoName, csName, csAssignedName)
-			}
-
-			locoMap[locoName] = csName
-
-			if controlsLoco {
-				log.Printf("added loco %s controlled by central station %s", locoConfig.Name, csConfig.Name)
-			} else {
-				log.Printf("added loco %s to central station %s", locoConfig.Name, csConfig.Name)
-			}
-		}
+	if err := configSet.register(gw); err != nil {
+		logger.Fatal(err)
 	}
 
 	sig := make(chan os.Signal, 1)

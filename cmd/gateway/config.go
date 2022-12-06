@@ -16,15 +16,31 @@ import (
 var jamlExts = []string{".yaml", ".yml"}
 
 type configSet struct {
+	logger        *log.Logger
 	csConfigMap   map[string]*gateway.CSConfig
 	locoConfigMap map[string]*gateway.LocoConfig
+	csList        []*gateway.CS
 }
 
-func newConfigSet() *configSet {
+func newConfigSet(logger *log.Logger) *configSet {
+	if logger == nil {
+		logger = log.New(io.Discard, "", 0) // dev/null
+	}
 	return &configSet{
+		logger:        logger,
 		csConfigMap:   map[string]*gateway.CSConfig{},
 		locoConfigMap: map[string]*gateway.LocoConfig{},
 	}
+}
+
+func (c *configSet) close() error {
+	var lastErr error
+	for _, cs := range c.csList {
+		if err := cs.Close(); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
 }
 
 func isCSConfig(m map[string]any) bool {
@@ -93,22 +109,58 @@ func (c *configSet) load(fsys fs.FS, path string) error {
 		}
 
 		if !slices.Contains(jamlExts, filepath.Ext(d.Name())) {
-			log.Printf("...skipped %s", subPath)
+			c.logger.Printf("...skipped %s", subPath)
 			return nil
 		}
 
 		b, err := fs.ReadFile(fsys, subPath)
 		if err != nil {
-			log.Printf("...%s %s", subPath, err)
+			c.logger.Printf("...%s %s", subPath, err)
 			return err
 		}
 
 		if err = c.parseYaml(b); err != nil {
-			log.Printf("...error loading %s: %s", subPath, err)
+			c.logger.Printf("...error loading %s: %s", subPath, err)
 			return err
 		}
 
-		log.Printf("...loaded %s", subPath)
+		c.logger.Printf("...loaded %s", subPath)
 		return nil
 	})
+}
+
+func (c *configSet) register(gw *gateway.Gateway) error {
+	locoMap := map[string]string{}
+
+	for csName, csConfig := range c.csConfigMap {
+		c.logger.Printf("register central station %s", csName)
+		cs, err := gateway.NewCS(csConfig, gw)
+		if err != nil {
+			return err
+		}
+		c.csList = append(c.csList, cs)
+
+		for locoName, locoConfig := range c.locoConfigMap {
+
+			csAssignedName, ok := locoMap[locoName]
+
+			controlsLoco, err := cs.AddLoco(locoConfig)
+			if err != nil {
+				return err
+			}
+
+			if controlsLoco && ok {
+				return fmt.Errorf("loco %s is controlled by more than one central station %s, %s", locoName, csName, csAssignedName)
+			}
+
+			locoMap[locoName] = csName
+
+			if controlsLoco {
+				c.logger.Printf("added loco %s controlled by central station %s", locoConfig.Name, csConfig.Name)
+			} else {
+				c.logger.Printf("added loco %s to central station %s", locoConfig.Name, csConfig.Name)
+			}
+		}
+	}
+	return nil
 }
