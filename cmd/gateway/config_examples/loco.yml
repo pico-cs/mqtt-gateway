@@ -1,0 +1,8 @@
+# configure loco
+name: br01
+addr: 1
+fcts:
+  light:
+    no: 0
+  horn:
+    no: 5

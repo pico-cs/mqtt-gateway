@@ -1,0 +1,7 @@
+# configure central station
+name: cs01
+port: /dev/ttyACM0 # connected to serial port
+incls:
+  - .* # include all locos (regular expression)
+excls:
+  - br18 # exclude br18

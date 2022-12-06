@@ -59,7 +59,7 @@ type CSConfig struct {
 	// list of regular expressions defining which set of objects should be controlled by this command station
 	// as a secondary command station
 	// excluding regular expressions do have precedence over including regular expressions
-	Excls []string // List of regular expressions defining
+	Excls []string
 }
 
 func (c *CSConfig) String() string {

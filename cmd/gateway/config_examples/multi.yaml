@@ -1,0 +1,24 @@
+# multi document YAML configuration file
+---
+# configure central station
+name: cs02
+host: localhost # connected via WiFi TCP/IP connection
+port: 4242
+incls:
+  - br18
+---
+# configure loco
+name: br18
+addr: 18
+fcts:
+  light:
+    no: 0
+  bell:
+    no: 5
+  whistle:
+    no: 8
+
+
+
+
+

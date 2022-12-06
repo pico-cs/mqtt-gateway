@@ -95,8 +95,7 @@ Beside using a configuration directory the configuration files can be embedded i
 
 This is the prefered method using a static or default configuration. During the gateway start the embedded configuration files are scanned before the 'external' configuration files (configDir parameter), so an external object configuration would overwrite an embedded one.
 
-### Configuration examples
-...todo
+### [Configuration examples](https://github.com/pico-cs/mqtt-gateway/tree/main/cmd/gateway/config_examples/)
 
 ## MQTT topics
 In MQTT a topic is a string the MQTT broker uses to determine which messages should be send to each of the connected clients. The client uses a topic to publish a message and uses topics to subscribe to messages it would like to receive from the broker.
