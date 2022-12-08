@@ -4,19 +4,23 @@
 name: cs02
 host: localhost # connected via WiFi TCP/IP connection
 port: 4242
-incls:
-  - br18
+primary:
+  incls:
+    - br18 # primary command station for br18
+secondary:
+  incls:
+    - .*   # secondary command station for all remaining devices
 ---
 # configure loco
 name: br18
-addr: 18
+addr: 18 # decoder address
 fcts:
   light:
-    no: 0
+    no: 0 # function number for light
   bell:
-    no: 5
+    no: 5 # function number for bell
   whistle:
-    no: 8
+    no: 8 # function number for whistle
 
 
 

@@ -11,23 +11,33 @@ import (
 func testLoad(t *testing.T) {
 	cmpCSConfigMap := map[string]*gateway.CSConfig{
 		"cs01": {
-			Name:  "cs01",
-			Port:  "/dev/ttyACM0",
-			Incls: []string{".*"},
-			Excls: []string{"br18"},
+			Name: "cs01",
+			Port: "/dev/ttyACM0",
+			Primary: gateway.Filter{
+				Incls: []string{".*"},
+				Excls: []string{"br18"},
+			},
+			Secondary: gateway.Filter{
+				Incls: []string{".*"},
+			},
 		},
 		"cs02": {
-			Name:  "cs02",
-			Host:  "localhost",
-			Port:  "4242",
-			Incls: []string{"br18"},
+			Name: "cs02",
+			Host: "localhost",
+			Port: "4242",
+			Primary: gateway.Filter{
+				Incls: []string{"br18"},
+			},
+			Secondary: gateway.Filter{
+				Incls: []string{".*"},
+			},
 		},
 	}
 	cmpLocoConfigMap := map[string]*gateway.LocoConfig{
 		"br01": {
 			Name: "br01",
 			Addr: 1,
-			Fcts: map[string]gateway.LocoFctConfig{
+			Fcts: map[string]gateway.LocoFct{
 				"light": {No: 0},
 				"horn":  {No: 5},
 			},
@@ -35,7 +45,7 @@ func testLoad(t *testing.T) {
 		"br18": {
 			Name: "br18",
 			Addr: 18,
-			Fcts: map[string]gateway.LocoFctConfig{
+			Fcts: map[string]gateway.LocoFct{
 				"light":   {No: 0},
 				"bell":    {No: 5},
 				"whistle": {No: 8},

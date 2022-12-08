@@ -4,14 +4,16 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/url"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/paho"
+	"golang.org/x/exp/maps"
 )
 
 const defChanSize = 100
@@ -45,7 +47,11 @@ type Gateway struct {
 	config            *Config
 	connectionManager *autopaho.ConnectionManager
 
-	mu            sync.RWMutex
+	mu      sync.RWMutex
+	csMap   map[string]*CS
+	locoMap map[string]*Loco
+
+	subMu         sync.RWMutex
 	subscriptions map[string][]subscription
 
 	subTopic   string
@@ -64,12 +70,19 @@ func New(config *Config) (*Gateway, error) {
 		return nil, err
 	}
 
+	logger := config.Logger
+	if logger == nil {
+		logger = log.New(io.Discard, "", 0) // dev/null
+	}
+
 	gw := &Gateway{
 		config:        config,
+		csMap:         make(map[string]*CS),
+		locoMap:       make(map[string]*Loco),
 		subscriptions: make(map[string][]subscription),
 		subTopic:      joinTopic(config.TopicRoot, multiLevel),
 		errorTopic:    joinTopic(config.TopicRoot, classError),
-		logger:        log.New(os.Stderr, "", log.LstdFlags),
+		logger:        logger,
 		pubCh:         make(chan *pubMsg, defChanSize),
 		errCh:         make(chan *errMsg, defChanSize),
 		wg:            new(sync.WaitGroup),
@@ -115,13 +128,41 @@ func New(config *Config) (*Gateway, error) {
 
 // Close closes the gateway and the MQTT connection.
 func (gw *Gateway) Close() error {
+	gw.mu.RLock()
+	defer gw.mu.RUnlock()
+
+	// close command stations
+	for name, cs := range gw.csMap {
+		if err := cs.close(); err != nil { // ignore error
+			gw.logger.Printf("closed command station %s - %s", name, err)
+		} else {
+			gw.logger.Printf("closed command station %s", name)
+		}
+	}
+
+	// shutdown
 	gw.logger.Println("shutdown gateway...")
 	close(gw.pubCh)
 	close(gw.errCh)
 	gw.wg.Wait()
 	gw.logger.Printf("disconnect from broker %s", gw.config.address())
 	gw.unsubscribeBroker() // ignore error
+
 	return gw.connectionManager.Disconnect(context.Background())
+}
+
+// CSList returns the list of command stations assigned to this gateway.
+func (gw *Gateway) CSList() []*CS {
+	gw.mu.RLock()
+	defer gw.mu.RUnlock()
+	return maps.Values(gw.csMap)
+}
+
+// LocoList returns the list of locos assigned to this gateway.
+func (gw *Gateway) LocoList() []*Loco {
+	gw.mu.RLock()
+	defer gw.mu.RUnlock()
+	return maps.Values(gw.locoMap)
 }
 
 func (gw *Gateway) subscribeBroker() error {
@@ -148,15 +189,45 @@ func (gw *Gateway) unsubscribeBroker() error {
 	return nil
 }
 
-func (gw *Gateway) subscribe(hndCh chan<- *hndMsg, owner any, topic string, fn hndFn) {
+// AddCS adds a command station to the gateway via a command station configuration.
+func (gw *Gateway) AddCS(config *CSConfig) (*CS, error) {
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
+	if _, ok := gw.csMap[config.Name]; ok {
+		return nil, fmt.Errorf("command station %s does already exist", config.Name)
+	}
+	cs, err := newCS(config, gw)
+	if err != nil {
+		return nil, err
+	}
+	gw.csMap[config.Name] = cs
+	return cs, nil
+}
+
+// AddLoco adds a loco to the gateway via a loco configuration.
+func (gw *Gateway) AddLoco(config *LocoConfig) (*Loco, error) {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	if _, ok := gw.locoMap[config.Name]; ok {
+		return nil, fmt.Errorf("loco %s does already exist", config.Name)
+	}
+	loco, err := newLoco(config)
+	if err != nil {
+		return nil, err
+	}
+	gw.locoMap[config.Name] = loco
+	return loco, nil
+}
+
+func (gw *Gateway) subscribe(hndCh chan<- *hndMsg, owner any, topic string, fn hndFn) {
+	gw.subMu.Lock()
+	defer gw.subMu.Unlock()
 	gw.subscriptions[topic] = append(gw.subscriptions[topic], subscription{owner: owner, fn: fn, hndCh: hndCh})
 }
 
 func (gw *Gateway) unsubscribe(owner any, topic string) {
-	gw.mu.Lock()
-	defer gw.mu.Unlock()
+	gw.subMu.Lock()
+	defer gw.subMu.Unlock()
 	l := len(gw.subscriptions[topic])
 	for i, subscription := range gw.subscriptions[topic] {
 		if subscription.owner == owner {
@@ -174,8 +245,8 @@ func (gw *Gateway) handler(p *paho.Publish) {
 		return
 	}
 
-	gw.mu.RLock()
-	defer gw.mu.RUnlock()
+	gw.subMu.RLock()
+	defer gw.subMu.RUnlock()
 
 	subscriptions, ok := gw.subscriptions[topic.noRoot()]
 	if !ok {

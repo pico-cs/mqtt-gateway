@@ -19,7 +19,6 @@ type configSet struct {
 	logger        *log.Logger
 	csConfigMap   map[string]*gateway.CSConfig
 	locoConfigMap map[string]*gateway.LocoConfig
-	csList        []*gateway.CS
 }
 
 func newConfigSet(logger *log.Logger) *configSet {
@@ -31,16 +30,6 @@ func newConfigSet(logger *log.Logger) *configSet {
 		csConfigMap:   map[string]*gateway.CSConfig{},
 		locoConfigMap: map[string]*gateway.LocoConfig{},
 	}
-}
-
-func (c *configSet) close() error {
-	var lastErr error
-	for _, cs := range c.csList {
-		if err := cs.Close(); err != nil {
-			lastErr = err
-		}
-	}
-	return lastErr
 }
 
 func isCSConfig(m map[string]any) bool {
@@ -130,37 +119,29 @@ func (c *configSet) load(fsys fs.FS, path string) error {
 }
 
 func (c *configSet) register(gw *gateway.Gateway) error {
-	locoMap := map[string]string{}
-
-	for csName, csConfig := range c.csConfigMap {
-		c.logger.Printf("register central station %s", csName)
-		cs, err := gateway.NewCS(csConfig, gw)
+	for _, csConfig := range c.csConfigMap {
+		cs, err := gw.AddCS(csConfig)
 		if err != nil {
 			return err
 		}
-		c.csList = append(c.csList, cs)
 
-		for locoName, locoConfig := range c.locoConfigMap {
-
-			csAssignedName, ok := locoMap[locoName]
-
-			controlsLoco, err := cs.AddLoco(locoConfig)
+		for _, locoConfig := range c.locoConfigMap {
+			loco, err := gw.AddLoco(locoConfig)
 			if err != nil {
 				return err
 			}
-
-			if controlsLoco && ok {
-				return fmt.Errorf("loco %s is controlled by more than one central station %s, %s", locoName, csName, csAssignedName)
-			}
-
-			locoMap[locoName] = csName
-
-			if controlsLoco {
-				c.logger.Printf("added loco %s controlled by central station %s", locoConfig.Name, csConfig.Name)
-			} else {
-				c.logger.Printf("added loco %s to central station %s", locoConfig.Name, csConfig.Name)
+			if err := cs.AddLoco(loco); err != nil {
+				return err
 			}
 		}
+	}
+
+	for _, cs := range gw.CSList() {
+		c.logger.Printf("added command station %s", cs.Name())
+	}
+
+	for _, loco := range gw.LocoList() {
+		c.logger.Printf("added loco %s to central stations: primary %s secondaries %v", loco.Name(), loco.Primary(), loco.SecondaryList())
 	}
 	return nil
 }

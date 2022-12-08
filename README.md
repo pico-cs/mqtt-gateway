@@ -57,43 +57,38 @@ Preconditions:
 
 ### Gateway
 
-Print help (parameters):
-
+A list of all gateway parameters can be printed via:
 ```
 ./gateway -h
+```
+Execute gateway with MQTT host listening at address 10.10.10.42 (default port 1883):
+```
+./gateway -host 10.10.10.42
+```
+Execute gateway reading configurations files stored in directory /pico-cs/config
 
-Usage of ./gateway:
-  -configDir string
-    	configuration directory
-  -host string
-    	MQTT host (default "localhost")
-  -password string
-    	password
-  -port string
-    	MQTT port (default "1883")
-  -topicRoot string
-    	topic root (default "pico-cs")
-  -username string
-    	user name
+```
+./gateway -configDir /pico-cs/config
 ```
 
-...todo
-
 ### Configuration files
-To configure the gateway's command station and loco parameters [YAML files](https://yaml.org/) are used. The entire configuration can be stored in one file or in multiple files. During the start of the gateway the configuration directory (parameter configDir) and it's subdirectories are scanned for valid configuration files with file extension '.yaml' or '.yml'. The directory tree scan is a depth-first search and within a directory the files are visited in a lexical order. If a configuration for an object is found more than once the last one wins.
+To configure the gateway's command station and loco parameters [YAML files](https://yaml.org/) are used. The entire configuration can be stored in one file or in multiple files. During the start of the gateway the configuration directory (parameter configDir) and it's subdirectories are scanned for valid configuration files with file extension '.yaml' or '.yml'. The directory tree scan is a depth-first search and within a directory the files are visited in a lexical order. If a configuration for a device is found more than once the last one wins.
 
-Each object needs to define a name. As the object name is part of the [MQTT topic](#mqtt-topics) it must fullfil the following conditions:
+Each device needs to define a name. As the device name is part of the [MQTT topic](#mqtt-topics) it must fullfil the following conditions:
 - consist of valid MQTT topic characters and
 - must not contain characters "/", "+" or "#"
 
-All conditions are checked by the gateway on start and in case of a violation the program prints the respective error message and stops execution.
+If a device is assigned to a command station the command station acts whether as a primary or secondary.
+A primary command stations 'owns' the device, meaning that the command station registers for all commands of the device.
+A secondary command station listens and registers the events 'send' by the device and executes the correspondig commands to keep the device settings in sync with the primary command station.
+A device can be assigned to 0..1 primary command stations and 0..* secondary command stations.
 
 ### Embedded configuration files
 Beside using a configuration directory the configuration files can be embedded in the gateway executable:
 - store them in as part of the source code directory at mqtt-gateway/cmd/gateway/config and
 - build the binary 
 
-This is the prefered method using a static or default configuration. During the gateway start the embedded configuration files are scanned before the 'external' configuration files (configDir parameter), so an external object configuration would overwrite an embedded one.
+This is the prefered method using a static or default configuration. During the gateway start the embedded configuration files are scanned before the 'external' configuration files (configDir parameter), so an external device configuration would overwrite an embedded one.
 
 ### [Configuration examples](https://github.com/pico-cs/mqtt-gateway/tree/main/cmd/gateway/config_examples/)
 
@@ -101,10 +96,15 @@ This is the prefered method using a static or default configuration. During the 
 In MQTT a topic is a string the MQTT broker uses to determine which messages should be send to each of the connected clients. The client uses a topic to publish a message and uses topics to subscribe to messages it would like to receive from the broker.
 A topic can consist of more than one level - the character used to separate levels is '/'. A client might use wildcards when subscribing to topics, where '+' is the wildcard character for a dedicated level and '#' is the multi level wildcard character which can only be used as the last level of a topic. For further details about MQTT topics please see the [MQTT specification](https://mqtt.org/mqtt-specification/).
 
-The topic schema used by the gateway:
+The topic schema used by the gateway is
 
 ```
-"<topic root>/<object type>/<object name>/<property>[/<command>]"
+"<topic root>/<device type>/<device name>/<property>[/<command>]"
+```
+
+with 
+```
+device type: cs | loco
 ```
 
 The message payload is whether a json encoded atomic field (aka string, number, boolean) or a json encoded object.

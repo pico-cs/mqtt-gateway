@@ -35,17 +35,16 @@ func lookupEnv(name, defVal string) string {
 
 func main() {
 
-	logger := log.New(os.Stderr, "gateway", log.LstdFlags)
+	logger := log.New(os.Stderr, "", log.LstdFlags)
 
-	config := &gateway.Config{}
+	config := &gateway.Config{Logger: logger}
 	configSet := newConfigSet(logger)
-	defer configSet.close()
 
-	flag.StringVar(&config.TopicRoot, "topicRoot", lookupEnv(envTopicRoot, gateway.DefaultTopicRoot), "topic root")
+	flag.StringVar(&config.TopicRoot, "topicRoot", lookupEnv(envTopicRoot, gateway.DefaultTopicRoot), "MQTT topic root")
 	flag.StringVar(&config.Host, "host", lookupEnv(envHost, gateway.DefaultHost), "MQTT host")
 	flag.StringVar(&config.Port, "port", lookupEnv(envPort, gateway.DefaultPort), "MQTT port")
-	flag.StringVar(&config.Username, "username", lookupEnv(envUsername, ""), "user name")
-	flag.StringVar(&config.Password, "password", lookupEnv(envPassword, ""), "password")
+	flag.StringVar(&config.Username, "username", lookupEnv(envUsername, ""), "MQTT username")
+	flag.StringVar(&config.Password, "password", lookupEnv(envPassword, ""), "MQTT password")
 
 	externConfigDir := flag.String("configDir", "", "configuration directory")
 
