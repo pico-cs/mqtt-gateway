@@ -65,6 +65,11 @@ func (t topic) noRoot() string {
 	return joinTopic(t[1:]...)
 }
 
+// isCommand returns true if the topic is a command topic.
+func (t topic) isCommand() bool {
+	return len(t) == maxNumPart
+}
+
 // noCommand returns topic without command part.
 func (t topic) noCommand() string {
 	l := len(t)

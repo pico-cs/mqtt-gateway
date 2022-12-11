@@ -72,6 +72,10 @@ func main() {
 	if err := configSet.register(gw); err != nil {
 		logger.Fatal(err)
 	}
+	// start listening
+	if err := gw.Listen(); err != nil {
+		logger.Fatal(err)
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

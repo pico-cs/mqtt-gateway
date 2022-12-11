@@ -1,18 +1,18 @@
 // Package gateway provides a pico-cs MQTT broker gateway.
 package gateway
 
+// use paho mqtt 3.1 broker instead the mqtt 5 version github.com/eclipse/paho.golang/paho
+// because couldn't get the retain message handling work properly which is an essential part
+// of this gateway
+
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"net/url"
 	"sync"
-	"time"
 
-	"github.com/eclipse/paho.golang/autopaho"
-	"github.com/eclipse/paho.golang/paho"
+	MQTT "github.com/eclipse/paho.mqtt.golang"
 	"golang.org/x/exp/maps"
 )
 
@@ -21,17 +21,19 @@ const defChanSize = 100
 type hndFn func(payload any) (any, error)
 
 type pubMsg struct {
-	topic string
-	value any
+	topic  string
+	retain bool
+	value  any
 }
 
 type errMsg struct {
-	topic string
-	err   error
+	topic  string
+	retain bool
+	err    error
 }
 
 type hndMsg struct {
-	topic topic
+	topic string
 	fn    hndFn
 	value any
 }
@@ -44,8 +46,10 @@ type subscription struct {
 
 // Gateway represents a MQTT broker gateway.
 type Gateway struct {
-	config            *Config
-	connectionManager *autopaho.ConnectionManager
+	config *Config
+	client MQTT.Client
+
+	listening bool
 
 	mu      sync.RWMutex
 	csMap   map[string]*CS
@@ -88,35 +92,24 @@ func New(config *Config) (*Gateway, error) {
 		wg:            new(sync.WaitGroup),
 	}
 
-	pahoConfig := autopaho.ClientConfig{
-		BrokerUrls:     []*url.URL{{Scheme: "tcp", Host: config.address()}},
-		OnConnectError: func(err error) { log.Println(err) },
-		ClientConfig: paho.ClientConfig{
-			Router: paho.NewSingleHandlerRouter(gw.handler),
-		},
+	// MQTT:
+	// starting with a clean seesion without client id as receiving
+	// retained messages should be enough initializing the
+	// command stations
+	opts := MQTT.NewClientOptions()
+	opts.AddBroker(config.address())
+	opts.SetUsername(config.Username)
+	opts.SetPassword(config.Password)
+	opts.SetAutoReconnect(true)
+	opts.SetCleanSession(true)
+	opts.SetDefaultPublishHandler(gw.handler)
+
+	client := MQTT.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		return nil, token.Error()
 	}
+	gw.client = client
 
-	pahoConfig.SetUsernamePassword(config.Username, []byte(config.Password))
-
-	connectionManager, err := autopaho.NewConnection(context.Background(), pahoConfig)
-	//cancel()
-	if err != nil {
-		return nil, err
-	}
-
-	gw.connectionManager = connectionManager
-
-	// don't wait forever in case of connection issues like invalid host or port.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-
-	if err := connectionManager.AwaitConnection(ctx); err != nil {
-		return nil, err
-	}
-
-	if err := gw.subscribeBroker(); err != nil {
-		return nil, err
-	}
 	gw.logger.Printf("connected to broker %s", config.address())
 
 	// start go routines
@@ -125,6 +118,11 @@ func New(config *Config) (*Gateway, error) {
 
 	return gw, nil
 }
+
+const (
+	defaultQoS = 1
+	wait       = 250 // waiting time for client disconnect in ms
+)
 
 // Close closes the gateway and the MQTT connection.
 func (gw *Gateway) Close() error {
@@ -147,8 +145,20 @@ func (gw *Gateway) Close() error {
 	gw.wg.Wait()
 	gw.logger.Printf("disconnect from broker %s", gw.config.address())
 	gw.unsubscribeBroker() // ignore error
+	gw.client.Disconnect(wait)
+	return nil
+}
 
-	return gw.connectionManager.Disconnect(context.Background())
+// Listen starts the gateway listening to subscriptions.
+func (gw *Gateway) Listen() error {
+	// separated to start listen after subscriptions not to miss retained messages
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	if gw.listening {
+		return fmt.Errorf("gateway is already listening")
+	}
+	// subscribe
+	return gw.subscribeBroker()
 }
 
 // CSList returns the list of command stations assigned to this gateway.
@@ -166,25 +176,15 @@ func (gw *Gateway) LocoList() []*Loco {
 }
 
 func (gw *Gateway) subscribeBroker() error {
-	sub := &paho.Subscribe{
-		Subscriptions: map[string]paho.SubscribeOptions{
-			gw.subTopic: {QoS: 1}, //QoS 1: at least once
-		},
-	}
-	if suback, err := gw.connectionManager.Subscribe(context.Background(), sub); err != nil {
-		gw.logger.Printf("subscribe suback %v error %s", suback, err)
-		return err
+	if token := gw.client.Subscribe(gw.subTopic, defaultQoS, gw.handler); token.Wait() && token.Error() != nil {
+		return token.Error()
 	}
 	return nil
 }
 
 func (gw *Gateway) unsubscribeBroker() error {
-	unsub := &paho.Unsubscribe{
-		Topics: []string{gw.subTopic},
-	}
-	if unsuback, err := gw.connectionManager.Unsubscribe(context.Background(), unsub); err != nil {
-		gw.logger.Printf("unsubscribe unsuback %v error %s", unsuback, err)
-		return err
+	if token := gw.client.Unsubscribe(gw.subTopic); token.Wait() && token.Error() != nil {
+		return token.Error()
 	}
 	return nil
 }
@@ -238,12 +238,20 @@ func (gw *Gateway) unsubscribe(owner any, topic string) {
 	}
 }
 
-func (gw *Gateway) handler(p *paho.Publish) {
-	topic, err := parseTopic(p.Topic)
+func (gw *Gateway) handler(client MQTT.Client, msg MQTT.Message) {
+	topic, err := parseTopic(msg.Topic())
 	if err != nil {
-		gw.errCh <- &errMsg{topic: p.Topic, err: err}
+		gw.errCh <- &errMsg{topic: msg.Topic(), err: err}
 		return
 	}
+
+	var value any
+	if err := json.Unmarshal(msg.Payload(), &value); err != nil {
+		gw.errCh <- &errMsg{topic: msg.Topic(), err: err}
+		return
+	}
+
+	gw.logger.Printf("receive: topic %s retained %t value %v\n", msg.Topic(), msg.Retained(), value)
 
 	gw.subMu.RLock()
 	defer gw.subMu.RUnlock()
@@ -253,16 +261,8 @@ func (gw *Gateway) handler(p *paho.Publish) {
 		return // nothing to do
 	}
 
-	var value any
-	if err := json.Unmarshal(p.Payload, &value); err != nil {
-		gw.errCh <- &errMsg{topic: p.Topic, err: err}
-		return
-	}
-
-	// log.Printf("unmarshall payload %[1]v %[1]s value %[2]T %[2]v\n", p.Payload, payload)
-
 	for _, subscription := range subscriptions {
-		subscription.hndCh <- &hndMsg{topic: topic, fn: subscription.fn, value: value}
+		subscription.hndCh <- &hndMsg{topic: msg.Topic(), fn: subscription.fn, value: value}
 	}
 }
 
@@ -275,7 +275,7 @@ func (gw *Gateway) publish(wg *sync.WaitGroup, pubCh <-chan *pubMsg, errCh chan<
 			continue // nothing to publish
 		}
 
-		gw.logger.Printf("publish: topic %s value %v", msg.topic, msg.value)
+		gw.logger.Printf("publish: topic %s retain %t value %v\n", msg.topic, msg.retain, msg.value)
 
 		payload, err := json.Marshal(msg.value)
 		if err != nil {
@@ -283,15 +283,9 @@ func (gw *Gateway) publish(wg *sync.WaitGroup, pubCh <-chan *pubMsg, errCh chan<
 			continue
 		}
 
-		publish := &paho.Publish{
-			QoS:     1,    // QoS == 1
-			Retain:  true, // retain msg, so that new joiners will get the latest message
-			Topic:   msg.topic,
-			Payload: payload,
-		}
-
-		if _, err := gw.connectionManager.Publish(context.Background(), publish); err != nil {
-			errCh <- &errMsg{topic: msg.topic, err: err}
+		token := gw.client.Publish(msg.topic, defaultQoS, msg.retain, payload)
+		if token.Wait() && token.Error() != nil {
+			errCh <- &errMsg{topic: msg.topic, err: token.Error()}
 		}
 	}
 }
@@ -307,7 +301,7 @@ func (gw *Gateway) publishError(wg *sync.WaitGroup, errCh <-chan *errMsg) {
 
 	for msg := range errCh {
 
-		gw.logger.Printf("publish error: %s", msg.err)
+		gw.logger.Printf("publish: topic %s retain %t error %s\n", msg.topic, msg.retain, msg.err)
 
 		payload, err := json.Marshal(&errPayload{Topic: msg.topic, Error: msg.err.Error()})
 		if err != nil {
@@ -315,16 +309,10 @@ func (gw *Gateway) publishError(wg *sync.WaitGroup, errCh <-chan *errMsg) {
 			gw.logger.Printf("publish error: topic %s err %s", msg.topic, err)
 		}
 
-		publish := &paho.Publish{
-			QoS:     1, // QoS == 1
-			Retain:  false,
-			Topic:   gw.errorTopic,
-			Payload: payload,
-		}
-
-		if _, err := gw.connectionManager.Publish(context.Background(), publish); err != nil {
+		token := gw.client.Publish(gw.errorTopic, defaultQoS, msg.retain, payload)
+		if token.Wait() && token.Error() != nil {
 			// hm, we can only log...
-			gw.logger.Printf("publish error: topic %s error %s", msg.topic, err)
+			gw.logger.Printf("publish error: topic %s err %s", msg.topic, token.Error())
 		}
 	}
 }

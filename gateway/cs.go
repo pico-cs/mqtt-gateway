@@ -76,10 +76,21 @@ func (cs *CS) handler(wg *sync.WaitGroup, hndCh <-chan *hndMsg, pubCh chan<- *pu
 	defer wg.Done()
 
 	for msg := range hndCh {
-		if value, err := msg.fn(msg.value); err != nil {
-			errCh <- &errMsg{topic: msg.topic.String(), err: err}
-		} else {
-			pubCh <- &pubMsg{topic: msg.topic.noCommand(), value: value}
+
+		topic, err := parseTopic(msg.topic)
+		if err != nil {
+			errCh <- &errMsg{topic: msg.topic, err: err}
+			break
+		}
+
+		value, err := msg.fn(msg.value)
+		if err != nil {
+			errCh <- &errMsg{topic: msg.topic, err: err}
+			break
+		}
+
+		if topic.isCommand() {
+			pubCh <- &pubMsg{topic: topic.noCommand(), value: value}
 		}
 	}
 }
