@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/pico-cs/go-client/client"
@@ -105,7 +106,14 @@ func (cs *CS) unsubscribe() {
 	cs.gateway.unsubscribe(cs, joinTopic("cs", cs.name, "enabled", "set"))
 }
 
-func (cs *CS) pushHandler(msg string) {} // TODO: push messages
+func (cs *CS) pushHandler(msg client.Msg, err error) {
+	// TODO: push messages
+	if err != nil {
+		log.Printf("push message: %s", msg)
+	} else {
+		log.Printf("push message error: %s", err)
+	}
+}
 
 func (cs *CS) getEnabled(client *client.Client) hndFn {
 	return func(payload any) (any, error) {
