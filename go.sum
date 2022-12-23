@@ -6,8 +6,8 @@ github.com/eclipse/paho.mqtt.golang v1.4.2/go.mod h1:JGt0RsEwEX+Xa/agj90YJ9d9DH2
 github.com/gorilla/websocket v1.4.2/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/gorilla/websocket v1.5.0 h1:PPwGk2jz7EePpoHN/+ClbZu8SPxiqlu12wZP/3sWmnc=
 github.com/gorilla/websocket v1.5.0/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
-github.com/pico-cs/go-client v0.2.2 h1:y682p6Gbs51qHYAFUctIzz/xoQrkB3D174Uz78BS+J0=
-github.com/pico-cs/go-client v0.2.2/go.mod h1:ty2wUvjX3bS2gK/dgpGFOjBUFwijDvX+WnHFB5wVKQg=
+github.com/pico-cs/go-client v0.2.3 h1:SNvavTQuFq+wWqtaxJ8nAMdrXKo3hOYzXAphEvcN9/4=
+github.com/pico-cs/go-client v0.2.3/go.mod h1:ty2wUvjX3bS2gK/dgpGFOjBUFwijDvX+WnHFB5wVKQg=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/stretchr/testify v1.7.0 h1:nwc3DEeHmmLAfoZucVR881uASk0Mfjw8xYJ99tb5CcY=
 go.bug.st/serial v1.4.1 h1:AwYUNixVf90XymNeJaUkMrPp+GZQe3RMFQmpVdHIUK8=

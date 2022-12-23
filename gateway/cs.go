@@ -109,10 +109,10 @@ func (cs *CS) unsubscribe() {
 func (cs *CS) pushHandler(msg client.Msg, err error) {
 	// TODO: push messages
 	if err != nil {
-		log.Printf("push message: %s", msg)
-	} else {
 		log.Printf("push message error: %s", err)
+		return
 	}
+	log.Printf("%s", msg)
 }
 
 func (cs *CS) getEnabled(client *client.Client) hndFn {

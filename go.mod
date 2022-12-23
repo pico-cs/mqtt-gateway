@@ -2,12 +2,12 @@ module github.com/pico-cs/mqtt-gateway
 
 go 1.19
 
-// replace github.com/pico-cs/go-client => ../go-client
-// replace github.com/pico-cs/go-client/client => ../go-client/client
+//replace github.com/pico-cs/go-client => ../go-client
+//replace github.com/pico-cs/go-client/client => ../go-client/client
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.4.2
-	github.com/pico-cs/go-client v0.2.2
+	github.com/pico-cs/go-client v0.2.3
 	golang.org/x/exp v0.0.0-20221217163422-3c43f8badb15
 	gopkg.in/yaml.v3 v3.0.1
 )
