@@ -81,13 +81,13 @@ func (cs *CS) handler(wg *sync.WaitGroup, hndCh <-chan *hndMsg, pubCh chan<- *pu
 		topic, err := parseTopic(msg.topic)
 		if err != nil {
 			errCh <- &errMsg{topic: msg.topic, err: err}
-			break
+			continue
 		}
 
 		value, err := msg.fn(msg.value)
 		if err != nil {
 			errCh <- &errMsg{topic: msg.topic, err: err}
-			break
+			continue
 		}
 
 		if topic.isCommand() {
@@ -97,13 +97,13 @@ func (cs *CS) handler(wg *sync.WaitGroup, hndCh <-chan *hndMsg, pubCh chan<- *pu
 }
 
 func (cs *CS) subscribe() {
-	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("cs", cs.name, "enabled", "get"), cs.getEnabled(cs.client))
-	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("cs", cs.name, "enabled", "set"), cs.setEnabled(cs.client))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("cs", cs.name, "mtenabled", "get"), cs.getMTEnabled(cs.client))
+	cs.gateway.subscribe(cs.hndCh, cs, joinTopic("cs", cs.name, "mtenabled", "set"), cs.setMTEnabled(cs.client))
 }
 
 func (cs *CS) unsubscribe() {
-	cs.gateway.unsubscribe(cs, joinTopic("cs", cs.name, "enabled", "get"))
-	cs.gateway.unsubscribe(cs, joinTopic("cs", cs.name, "enabled", "set"))
+	cs.gateway.unsubscribe(cs, joinTopic("cs", cs.name, "mtenabled", "get"))
+	cs.gateway.unsubscribe(cs, joinTopic("cs", cs.name, "mtenabled", "set"))
 }
 
 func (cs *CS) pushHandler(msg client.Msg, err error) {
@@ -115,19 +115,19 @@ func (cs *CS) pushHandler(msg client.Msg, err error) {
 	log.Printf("%s", msg)
 }
 
-func (cs *CS) getEnabled(client *client.Client) hndFn {
+func (cs *CS) getMTEnabled(client *client.Client) hndFn {
 	return func(payload any) (any, error) {
-		return client.Enabled()
+		return client.MTEnabled()
 	}
 }
 
-func (cs *CS) setEnabled(client *client.Client) hndFn {
+func (cs *CS) setMTEnabled(client *client.Client) hndFn {
 	return func(payload any) (any, error) {
 		enabled, ok := payload.(bool)
 		if !ok {
-			return nil, fmt.Errorf("setEnabled: invalid enabled type %[1]T value %[1]v", payload)
+			return nil, fmt.Errorf("setMTEnabled: invalid enabled type %[1]T value %[1]v", payload)
 		}
-		return client.SetEnabled(enabled)
+		return client.SetMTEnabled(enabled)
 	}
 }
 
