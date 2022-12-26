@@ -3,13 +3,13 @@
 ### Command station
 
    ***
-#### Enable DCC output
+#### Enable main track DCC output
     Event topic:
-    "<topic root>/cs/<command station name>/enabled"
+    "<topic root>/cs/<command station name>/mtenabled"
     
     Command topics:
-    "<topic root>/cs/<command station name>/enabled/get"
-    "<topic root>/cs/<command station name>/enabled/set"
+    "<topic root>/cs/<command station name>/mtenabled/get"
+    "<topic root>/cs/<command station name>/mtenabled/set"
     
     Payload: true | false
 
