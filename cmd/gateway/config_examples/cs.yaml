@@ -1,4 +1,5 @@
 # configure central station
+type: cs
 name: cs01
 port: /dev/ttyACM0 # connected to serial port
 primary:

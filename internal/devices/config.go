@@ -1,53 +1,19 @@
-package gateway
+package devices
 
 import (
 	"fmt"
-	"log"
-	"net"
 	"regexp"
 
 	"github.com/pico-cs/go-client/client"
+	"github.com/pico-cs/mqtt-gateway/internal/gateway"
 	"golang.org/x/exp/slices"
 )
 
-// Default values.
+// Configuration Types
 const (
-	DefaultTopicRoot = "pico-cs"
-	DefaultHost      = "localhost"
-	DefaultPort      = "1883"
+	CtCS   = "cs"
+	CtLoco = "loco"
 )
-
-// Config represents configuration data for the gateway.
-type Config struct {
-	// root part of all gateway MQTT topics
-	TopicRoot string
-	// MQTT broker host
-	Host string
-	// MQTT broker port
-	Port string
-	// MQTT authentication username
-	Username string
-	// MQTT authentication password
-	Password string
-	// Logger
-	Logger *log.Logger
-}
-
-func (c *Config) validate() error {
-	if err := checkTopicLevelName(c.TopicRoot); err != nil {
-		return fmt.Errorf("MQTTConfig topicRoot %s: %s", c.TopicRoot, err)
-	}
-	return nil
-}
-
-func (c *Config) port() string {
-	if c.Port == "" {
-		return DefaultPort
-	}
-	return c.Port
-}
-
-func (c *Config) address() string { return net.JoinHostPort(c.Host, c.port()) }
 
 type filter struct {
 	inclExpList []*regexp.Regexp
@@ -104,44 +70,38 @@ func (f *filter) includes(name string) bool {
 // Filter represents an including and excluding list of device names.
 type Filter struct {
 	// list of regular expressions defining which set of devices should be included
-	Incls []string
+	Incls []string `json:"incls"`
 	// list of regular expressions defining which set of devices should be excluded
 	// excluding regular expressions do have precedence over including regular expressions
-	Excls []string
-}
-
-func (f *Filter) String() string {
-	return fmt.Sprintf("include %v exclude %v", f.Incls, f.Excls)
+	Excls []string `json:"excls"`
 }
 
 func (f *Filter) filter() (*filter, error) { return newFilter(f.Incls, f.Excls) }
 
+// CSIOConfig represents configuration data for a command station IO.
+type CSIOConfig struct {
+	// command station GPIO
+	GPIO uint `json:"gpio"`
+}
+
 // CSConfig represents configuration data for a command station.
 type CSConfig struct {
 	// command station name (used in topic)
-	Name string
+	Name string `json:"name"`
 	// pico_w host in case of WiFi TCP/IP connection
-	Host string
+	Host string `json:"host"`
 	// TCP/IP port (WiFi) or serial port (serial over USB)
-	Port string
+	Port string `json:"port"`
 	// filter of devices for which this command station should be a primary device
-	Primary Filter
+	Primary Filter `json:"primary"`
 	// filter of devices for which this command station should be a secondary device
-	Secondary Filter
-}
-
-func (c *CSConfig) String() string {
-	return fmt.Sprintf("name %s host %s port %s primary devices %s secondary devices %s",
-		c.Name,
-		c.Host,
-		c.Port,
-		c.Primary,
-		c.Secondary,
-	)
+	Secondary Filter `json:"secondary"`
+	// command station IO mapping (key is used in topic)
+	IOs map[string]CSIOConfig `json:"ios"`
 }
 
 func (c *CSConfig) validate() error {
-	if err := checkTopicLevelName(c.Name); err != nil {
+	if err := gateway.CheckLevelName(c.Name); err != nil {
 		return fmt.Errorf("CSConfig name %s: %s", c.Name, err)
 	}
 	return nil
@@ -155,25 +115,34 @@ func (c *CSConfig) conn() (client.Conn, error) {
 	return client.NewSerial(c.Port)
 }
 
+// LocoFctConfig represents configuration data for a loco function.
+type LocoFctConfig struct {
+	// loco decoder function number
+	No uint `json:"no"`
+}
+
 // LocoConfig represents configuration data for a loco.
 type LocoConfig struct {
 	// loco name (used in topic)
-	Name string
+	Name string `json:"name"`
 	// loco decoder address
-	Addr uint
+	Addr uint `json:"addr"`
 	// loco function mapping (key is used in topic)
-	Fcts map[string]LocoFct
+	Fcts map[string]LocoFctConfig `json:"fcts"`
 }
 
 // ReservedFctNames is the list of reserved function names which cannot be used in loco configurations.
 var ReservedFctNames = []string{"dir", "speed"}
 
+// make sure, that reserved names cannot be changed.
+var reservedFctNames = slices.Clone(ReservedFctNames)
+
 func (c *LocoConfig) validate() error {
-	if err := checkTopicLevelName(c.Name); err != nil {
+	if err := gateway.CheckLevelName(c.Name); err != nil {
 		return fmt.Errorf("LocoConfig name %s: %s", c.Name, err)
 	}
 	for name := range c.Fcts {
-		if slices.Contains(ReservedFctNames, name) {
+		if slices.Contains(reservedFctNames, name) {
 			return fmt.Errorf("LocoConfig name %s: function name %s is reserved", c.Name, name)
 		}
 	}

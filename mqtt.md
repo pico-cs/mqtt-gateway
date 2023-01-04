@@ -5,11 +5,11 @@
    ***
 #### Enable main track DCC output
     Event topic:
-    "<topic root>/cs/<command station name>/mtenabled"
+    "<topic root>/cs/<command station name>/mte"
     
     Command topics:
-    "<topic root>/cs/<command station name>/mtenabled/get"
-    "<topic root>/cs/<command station name>/mtenabled/set"
+    "<topic root>/cs/<command station name>/mte/get"
+    "<topic root>/cs/<command station name>/mte/set"
     
     Payload: true | false
 
@@ -48,7 +48,14 @@
 
     Payload: none
 
-    Emergency stop - the loco is stopped immediately ignoring deceleration settings 
+    Emergency stop - the loco is stopped immediately ignoring deceleration settings
+
+    Command topic:
+    "<topic root>/loco/<loco name>/speed/add"
+
+    Payload: ±delta
+
+    Adds delta to speed - delta can be a positive or negative number
 
    ***
 #### Loco function

@@ -1,6 +1,7 @@
 # multi document YAML configuration file
 ---
 # configure central station
+type: cs
 name: cs02
 host: localhost # connected via WiFi TCP/IP connection
 port: 4242
@@ -12,6 +13,7 @@ secondary:
     - .*   # secondary command station for all remaining devices
 ---
 # configure loco
+type: loco
 name: br18
 addr: 18 # decoder address
 fcts:

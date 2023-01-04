@@ -1,4 +1,5 @@
 # configure loco
+type: loco
 name: br01
 addr: 1 # decoder address
 fcts:

@@ -8,17 +8,24 @@ package gateway
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
 	"sync"
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
-	"golang.org/x/exp/maps"
+	"github.com/pico-cs/mqtt-gateway/internal/logger"
 )
 
-const defChanSize = 100
+// DefChanSize defines the default channel size.
+const DefChanSize = 100
 
-type hndFn func(payload any) (any, error)
+// HndFn represents a handler function.
+type HndFn func(payload any) (any, error)
+
+// HndMsg represents a message provided to a registered handler.
+type HndMsg struct {
+	TopicStrs []string
+	Fn        HndFn
+	Value     any
+}
 
 type pubMsg struct {
 	topic  string
@@ -32,36 +39,26 @@ type errMsg struct {
 	err    error
 }
 
-type hndMsg struct {
-	topic string
-	fn    hndFn
-	value any
-}
-
 type subscription struct {
 	owner any
-	fn    hndFn
-	hndCh chan<- *hndMsg
+	fn    HndFn
+	hndCh chan<- *HndMsg
 }
+
+const classError = "error"
 
 // Gateway represents a MQTT broker gateway.
 type Gateway struct {
+	lg     logger.Logger
 	config *Config
 	client MQTT.Client
 
-	listening bool
-
-	mu      sync.RWMutex
-	csMap   map[string]*CS
-	locoMap map[string]*Loco
-
-	subMu         sync.RWMutex
+	mu            sync.RWMutex
+	listening     bool
 	subscriptions map[string][]subscription
 
 	subTopic   string
 	errorTopic string
-
-	logger *log.Logger
 
 	pubCh chan *pubMsg
 	errCh chan *errMsg
@@ -69,26 +66,23 @@ type Gateway struct {
 }
 
 // New returns a new gateway instance.
-func New(config *Config) (*Gateway, error) {
+func New(lg logger.Logger, config *Config) (*Gateway, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
 
-	logger := config.Logger
-	if logger == nil {
-		logger = log.New(io.Discard, "", 0) // dev/null
+	if lg == nil {
+		lg = logger.Null
 	}
 
 	gw := &Gateway{
+		lg:            lg,
 		config:        config,
-		csMap:         make(map[string]*CS),
-		locoMap:       make(map[string]*Loco),
 		subscriptions: make(map[string][]subscription),
-		subTopic:      joinTopic(config.TopicRoot, multiLevel),
-		errorTopic:    joinTopic(config.TopicRoot, classError),
-		logger:        logger,
-		pubCh:         make(chan *pubMsg, defChanSize),
-		errCh:         make(chan *errMsg, defChanSize),
+		subTopic:      topicJoinStr(config.TopicRoot, multiLevel),
+		errorTopic:    topicJoinStr(config.TopicRoot, classError),
+		pubCh:         make(chan *pubMsg, DefChanSize),
+		errCh:         make(chan *errMsg, DefChanSize),
 		wg:            new(sync.WaitGroup),
 	}
 
@@ -97,7 +91,7 @@ func New(config *Config) (*Gateway, error) {
 	// retained messages should be enough initializing the
 	// command stations
 	opts := MQTT.NewClientOptions()
-	opts.AddBroker(config.address())
+	opts.AddBroker(config.addr())
 	opts.SetUsername(config.Username)
 	opts.SetPassword(config.Password)
 	opts.SetAutoReconnect(true)
@@ -110,7 +104,7 @@ func New(config *Config) (*Gateway, error) {
 	}
 	gw.client = client
 
-	gw.logger.Printf("connected to broker %s", config.address())
+	lg.Printf("connect to broker %s", config.addr())
 
 	// start go routines
 	go gw.publish(gw.wg, gw.pubCh, gw.errCh)
@@ -119,37 +113,40 @@ func New(config *Config) (*Gateway, error) {
 	return gw, nil
 }
 
+// topicRoot returns the topic root.
+func (gw *Gateway) topicRoot() string { return gw.config.TopicRoot }
+
 const (
 	defaultQoS = 1
 	wait       = 250 // waiting time for client disconnect in ms
 )
 
-// Close closes the gateway and the MQTT connection.
+// Close closes the gateway.
 func (gw *Gateway) Close() error {
-	gw.mu.RLock()
-	defer gw.mu.RUnlock()
-
-	// close command stations
-	for name, cs := range gw.csMap {
-		if err := cs.close(); err != nil { // ignore error
-			gw.logger.Printf("closed command station %s - %s", name, err)
-		} else {
-			gw.logger.Printf("closed command station %s", name)
-		}
-	}
-
 	// shutdown
-	gw.logger.Println("shutdown gateway...")
+	gw.lg.Println("shutdown gateway...")
 	close(gw.pubCh)
 	close(gw.errCh)
 	gw.wg.Wait()
-	gw.logger.Printf("disconnect from broker %s", gw.config.address())
+	gw.lg.Printf("disconnect from broker %s", gw.config.addr())
 	gw.unsubscribeBroker() // ignore error
 	gw.client.Disconnect(wait)
 	return nil
 }
 
-// Listen starts the gateway listening to subscriptions.
+// PublishErr publishes a error message
+func (gw *Gateway) PublishErr(topicStrs []string, retain bool, err error) {
+	topicRootStr := topicJoin(append([]string{gw.topicRoot()}, topicStrs...))
+	gw.errCh <- &errMsg{topic: topicRootStr, retain: retain, err: err}
+}
+
+// Publish publishes a message.
+func (gw *Gateway) Publish(topicStrs []string, retain bool, value any) {
+	topicRootStr := topicJoin(append([]string{gw.topicRoot()}, topicStrs...))
+	gw.pubCh <- &pubMsg{topic: topicRootStr, retain: retain, value: value}
+}
+
+// Listen starts the gateway listening to the mqtt broker.
 func (gw *Gateway) Listen() error {
 	// separated to start listen after subscriptions not to miss retained messages
 	gw.mu.Lock()
@@ -157,22 +154,9 @@ func (gw *Gateway) Listen() error {
 	if gw.listening {
 		return fmt.Errorf("gateway is already listening")
 	}
+	gw.listening = true
 	// subscribe
 	return gw.subscribeBroker()
-}
-
-// CSList returns the list of command stations assigned to this gateway.
-func (gw *Gateway) CSList() []*CS {
-	gw.mu.RLock()
-	defer gw.mu.RUnlock()
-	return maps.Values(gw.csMap)
-}
-
-// LocoList returns the list of locos assigned to this gateway.
-func (gw *Gateway) LocoList() []*Loco {
-	gw.mu.RLock()
-	defer gw.mu.RUnlock()
-	return maps.Values(gw.locoMap)
 }
 
 func (gw *Gateway) subscribeBroker() error {
@@ -189,61 +173,31 @@ func (gw *Gateway) unsubscribeBroker() error {
 	return nil
 }
 
-// AddCS adds a command station to the gateway via a command station configuration.
-func (gw *Gateway) AddCS(config *CSConfig) (*CS, error) {
+// Subscribe subscribes a message handler.
+func (gw *Gateway) Subscribe(hndCh chan<- *HndMsg, owner any, topicStrs []string, fn HndFn) {
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
-	if _, ok := gw.csMap[config.Name]; ok {
-		return nil, fmt.Errorf("command station %s does already exist", config.Name)
-	}
-	cs, err := newCS(config, gw)
-	if err != nil {
-		return nil, err
-	}
-	gw.csMap[config.Name] = cs
-	return cs, nil
+	topicStr := topicJoin(topicStrs)
+	gw.subscriptions[topicStr] = append(gw.subscriptions[topicStr], subscription{owner: owner, fn: fn, hndCh: hndCh})
 }
 
-// AddLoco adds a loco to the gateway via a loco configuration.
-func (gw *Gateway) AddLoco(config *LocoConfig) (*Loco, error) {
+// Unsubscribe unsubscribes a message handler.
+func (gw *Gateway) Unsubscribe(owner any, topicStrs []string) {
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
-	if _, ok := gw.locoMap[config.Name]; ok {
-		return nil, fmt.Errorf("loco %s does already exist", config.Name)
-	}
-	loco, err := newLoco(config)
-	if err != nil {
-		return nil, err
-	}
-	gw.locoMap[config.Name] = loco
-	return loco, nil
-}
-
-func (gw *Gateway) subscribe(hndCh chan<- *hndMsg, owner any, topic string, fn hndFn) {
-	gw.subMu.Lock()
-	defer gw.subMu.Unlock()
-	gw.subscriptions[topic] = append(gw.subscriptions[topic], subscription{owner: owner, fn: fn, hndCh: hndCh})
-}
-
-func (gw *Gateway) unsubscribe(owner any, topic string) {
-	gw.subMu.Lock()
-	defer gw.subMu.Unlock()
-	l := len(gw.subscriptions[topic])
-	for i, subscription := range gw.subscriptions[topic] {
+	topicStr := topicJoin(topicStrs)
+	l := len(gw.subscriptions[topicStr])
+	for i, subscription := range gw.subscriptions[topicStr] {
 		if subscription.owner == owner {
-			gw.subscriptions[topic][i] = gw.subscriptions[topic][l-1]
-			gw.subscriptions[topic] = gw.subscriptions[topic][:l-1]
+			gw.subscriptions[topicStr][i] = gw.subscriptions[topicStr][l-1]
+			gw.subscriptions[topicStr] = gw.subscriptions[topicStr][:l-1]
 			break
 		}
 	}
 }
 
 func (gw *Gateway) handler(client MQTT.Client, msg MQTT.Message) {
-	topic, err := parseTopic(msg.Topic())
-	if err != nil {
-		gw.errCh <- &errMsg{topic: msg.Topic(), err: err}
-		return
-	}
+	topicStrs := topicSplit(msg.Topic())
 
 	var value any
 	if err := json.Unmarshal(msg.Payload(), &value); err != nil {
@@ -251,18 +205,19 @@ func (gw *Gateway) handler(client MQTT.Client, msg MQTT.Message) {
 		return
 	}
 
-	gw.logger.Printf("receive: topic %s retained %t value %v\n", msg.Topic(), msg.Retained(), value)
+	gw.lg.Printf("receive topic %s retained %t value %v\n", msg.Topic(), msg.Retained(), value)
 
-	gw.subMu.RLock()
-	defer gw.subMu.RUnlock()
+	gw.mu.RLock()
+	defer gw.mu.RUnlock()
 
-	subscriptions, ok := gw.subscriptions[topic.noRoot()]
+	topicNoRootStr := topicJoin(topicStrs[1:]) // no root
+	subscriptions, ok := gw.subscriptions[topicNoRootStr]
 	if !ok {
 		return // nothing to do
 	}
 
 	for _, subscription := range subscriptions {
-		subscription.hndCh <- &hndMsg{topic: msg.Topic(), fn: subscription.fn, value: value}
+		subscription.hndCh <- &HndMsg{TopicStrs: topicStrs[1:], Fn: subscription.fn, Value: value}
 	}
 }
 
@@ -275,7 +230,7 @@ func (gw *Gateway) publish(wg *sync.WaitGroup, pubCh <-chan *pubMsg, errCh chan<
 			continue // nothing to publish
 		}
 
-		gw.logger.Printf("publish: topic %s retain %t value %v\n", msg.topic, msg.retain, msg.value)
+		gw.lg.Printf("publish topic %s retain %t value %v\n", msg.topic, msg.retain, msg.value)
 
 		payload, err := json.Marshal(msg.value)
 		if err != nil {
@@ -301,18 +256,18 @@ func (gw *Gateway) publishError(wg *sync.WaitGroup, errCh <-chan *errMsg) {
 
 	for msg := range errCh {
 
-		gw.logger.Printf("publish: topic %s retain %t error %s\n", msg.topic, msg.retain, msg.err)
+		gw.lg.Printf("publish topic %s retain %t error %s\n", msg.topic, msg.retain, msg.err)
 
 		payload, err := json.Marshal(&errPayload{Topic: msg.topic, Error: msg.err.Error()})
 		if err != nil {
 			// hm, we can only log...
-			gw.logger.Printf("publish error: topic %s err %s", msg.topic, err)
+			gw.lg.Printf("publish error topic %s err %s", msg.topic, err)
 		}
 
 		token := gw.client.Publish(gw.errorTopic, defaultQoS, msg.retain, payload)
 		if token.Wait() && token.Error() != nil {
 			// hm, we can only log...
-			gw.logger.Printf("publish error: topic %s err %s", msg.topic, token.Error())
+			gw.lg.Printf("publish error topic %s err %s", msg.topic, token.Error())
 		}
 	}
 }
