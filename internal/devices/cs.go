@@ -413,7 +413,11 @@ func (cs *CS) setLocoSpeed(client *client.Client, addr uint, publish bool) gatew
 
 func (cs *CS) stopLoco(client *client.Client, addr uint) gateway.HndFn {
 	return func(payload any) (any, error) {
-		return client.SetLocoSpeed128(addr, 1)
+		speed, err := client.SetLocoSpeed128(addr, 1) // emergency stop
+		if err != nil {
+			return nil, err
+		}
+		return speed128(speed).speed127(), nil // speed should be 0
 	}
 }
 
