@@ -76,6 +76,11 @@ type Filter struct {
 	Excls []string `json:"excls"`
 }
 
+// NewFilter returns a new Filter instance.
+func NewFilter() *Filter {
+	return &Filter{Incls: []string{}, Excls: []string{}}
+}
+
 func (f *Filter) filter() (*filter, error) { return newFilter(f.Incls, f.Excls) }
 
 // CSIOConfig represents configuration data for a command station IO.
@@ -93,11 +98,20 @@ type CSConfig struct {
 	// TCP/IP port (WiFi) or serial port (serial over USB)
 	Port string `json:"port"`
 	// filter of devices for which this command station should be a primary device
-	Primary Filter `json:"primary"`
+	Primary *Filter `json:"primary"`
 	// filter of devices for which this command station should be a secondary device
-	Secondary Filter `json:"secondary"`
+	Secondary *Filter `json:"secondary"`
 	// command station IO mapping (key is used in topic)
 	IOs map[string]CSIOConfig `json:"ios"`
+}
+
+// NewCSConfig returns a new CSConfig instance.
+func NewCSConfig() *CSConfig {
+	return &CSConfig{
+		Primary:   NewFilter(),
+		Secondary: NewFilter(),
+		IOs:       map[string]CSIOConfig{},
+	}
 }
 
 func (c *CSConfig) validate() error {
@@ -129,6 +143,11 @@ type LocoConfig struct {
 	Addr uint `json:"addr"`
 	// loco function mapping (key is used in topic)
 	Fcts map[string]LocoFctConfig `json:"fcts"`
+}
+
+// NewLocoConfig returns a new LocoConfig instance.
+func NewLocoConfig() *LocoConfig {
+	return &LocoConfig{Fcts: map[string]LocoFctConfig{}}
 }
 
 // ReservedFctNames is the list of reserved function names which cannot be used in loco configurations.

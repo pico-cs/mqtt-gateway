@@ -24,17 +24,25 @@ The resources on a micro controller are limited and following the [KISS priciple
 - client libraries provide an idiomatic way in their respective programming language to communicate with the command station
 - and finally this gateway provides MQTT integration (like future components might provide integrations to additional protocols)
 
+## Precondition
+- a running MQTT broker like [Mosquitto](https://mosquitto.org/)
+- the gateway executable or docker container 
+- command station and model locomotive configuration files
+
 ## Build
 
-For building there is two options available:
+For building there are the following options available:
 
 - [local build](#local): install Go environment and build on your local machine
+- [deploy as docker container](#docker): build and deploy as docker container
 - [docker build](https://github.com/pico-cs/docker-buld): no toolchain installation but a running docker environment on your local machine is required
 
 ### Local
-To build go-hdb you need to have
+
+#### Build
+To build the pico-cs mqtt-gateway you need to have
 - a working Go environment of the [latest Go version](https://golang.org/dl/) and
-- [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) installed 
+- [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) installed.
 
 ```
 git clone https://github.com/pico-cs/mqtt-gateway.git
@@ -48,20 +56,12 @@ Example building executable for Raspberry Pi on Raspberry Pi OS
 GOOS=linux GOARCH=arm GOARM=7 go build
 ```
 
-## Run the gateway
-
-Preconditions:
-- a running MQTT broker like [Mosquitto](https://mosquitto.org/)
-- the gateway executable
-- command station and model locomotive configuration files
-
-### Gateway
-
+#### Run
 A list of all gateway parameters can be printed via:
 ```
 ./gateway -h
 ```
-Execute gateway with MQTT host listening at address 10.10.10.42 (default port 1883):
+Execute gateway with MQTT broker listening at address 10.10.10.42 (default port 1883):
 ```
 ./gateway -host 10.10.10.42
 ```
@@ -69,6 +69,39 @@ Execute gateway reading configurations files stored in directory /pico-cs/config
 
 ```
 ./gateway -configDir /pico-cs/config
+```
+
+### Docker
+To build and run the pico-cs mqtt-gateway as docker container you need to have
+- a running [docker](https://docs.docker.com/engine/install/) environment and
+- [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) installed
+
+#### Build
+```
+git clone https://github.com/pico-cs/mqtt-gateway.git
+cd mqtt-gateway
+docker build --tag pico-cs/mqtt-gateway .
+```
+
+#### Run
+A list of all gateway parameters can be printed via:
+```
+docker run -it pico-cs/mqtt-gateway -h
+```
+
+Execute container with
+- command station (pico) is connected to /dev/ttyACM0
+- MQTT broker listening at address 10.10.10.42 (default port 1883)
+- mqtt-gateway http endpoint (default 50000) should be made available on same host port 50000
+- run the container in detached mode
+
+```
+docker run -d --device /dev/ttyACM0 -p 50000:50000 pico-cs/mqtt-gateway -mqttHost='10.10.10.42' 
+```
+
+Execute container in interactive mode:
+```
+docker run -it --device /dev/ttyACM0 -p 50000:50000 pico-cs/mqtt-gateway -mqttHost='10.10.10.42' 
 ```
 
 ### Configuration files

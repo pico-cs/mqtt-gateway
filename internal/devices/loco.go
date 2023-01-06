@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 
 	"github.com/pico-cs/mqtt-gateway/internal/logger"
 	"golang.org/x/exp/maps"
@@ -48,26 +47,14 @@ func (s *LocoSet) Close() error {
 	return lastErr
 }
 
-// HandleFunc returns a http.HandleFunc handler.
-func (s *LocoSet) HandleFunc(addr string) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		type tpldata struct {
-			Title string
-			Items map[string]*url.URL
-		}
+// ServeHTTP implements the http.Handler interface.
+func (s *LocoSet) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	data := locoTplData{LocoMap: s.locoMap}
 
-		data := &tpldata{Items: map[string]*url.URL{}}
-
-		data.Title = "locos"
-		for name := range s.locoMap {
-			data.Items[name] = &url.URL{Scheme: "http", Host: addr, Path: fmt.Sprintf("/loco/%s", name)}
-		}
-
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		if err := idxTpl.Execute(w, data); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if err := locoIdxTpl.Execute(w, data); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
 	}
 }
 
@@ -90,6 +77,8 @@ func newLoco(lg logger.Logger, config *LocoConfig) (*Loco, error) {
 func (l *Loco) name() string { return l.config.Name }
 
 func (l *Loco) isPrimary(cs *CS) bool { return cs == l.primary }
+
+func (l *Loco) isSecondary(cs *CS) bool { _, ok := l.secondaries[cs.name()]; return ok }
 
 func (l *Loco) setPrimary(cs *CS) error {
 	if l.primary != nil {

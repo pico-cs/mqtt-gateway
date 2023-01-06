@@ -91,17 +91,17 @@ func (c *config) parseYaml(b []byte) error {
 
 		switch typ {
 		case devices.CtCS:
-			var csConfig devices.CSConfig
-			if err := dd.Decode(&csConfig); err != nil {
+			csConfig := devices.NewCSConfig()
+			if err := dd.Decode(csConfig); err != nil {
 				return err
 			}
-			c.csConfigMap[csConfig.Name] = &csConfig
+			c.csConfigMap[csConfig.Name] = csConfig
 		case devices.CtLoco:
-			var locoConfig devices.LocoConfig
-			if err := dd.Decode(&locoConfig); err != nil {
+			locoConfig := devices.NewLocoConfig()
+			if err := dd.Decode(locoConfig); err != nil {
 				return err
 			}
-			c.locoConfigMap[locoConfig.Name] = &locoConfig
+			c.locoConfigMap[locoConfig.Name] = locoConfig
 		default:
 			return fmt.Errorf("invalid configuration %v", m)
 		}
@@ -174,8 +174,9 @@ func (s *deviceSets) register(config *config) error {
 }
 
 func (s *deviceSets) registerHTTP(server *server.Server) {
-	server.HandleFunc("/cs", s.csSet.HandleFunc(server.Addr()))
-	server.HandleFunc("/loco", s.locoSet.HandleFunc(server.Addr()))
+	server.HandleFunc("/", devices.HTTPHandler)
+	server.Handle("/cs", s.csSet)
+	server.Handle("/loco", s.locoSet)
 	for name, cs := range s.csSet.Items() {
 		server.Handle(fmt.Sprintf("/cs/%s", name), cs)
 	}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"sync"
 
 	"github.com/pico-cs/go-client/client"
@@ -52,26 +51,78 @@ func (s *CSSet) Close() error {
 	return lastErr
 }
 
-// HandleFunc returns a http.HandleFunc handler.
-func (s *CSSet) HandleFunc(addr string) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		type tpldata struct {
-			Title string
-			Items map[string]*url.URL
-		}
+/*
+func (s *CSSet) idxTplExecute(w io.Writer) error {
+	var b bytes.Buffer
 
-		data := &tpldata{Items: map[string]*url.URL{}}
+	renderLocos := func(title string, locos []*Loco) {
+		if len(locos) > 0 {
+			b.WriteString(`<!DOCTYPE html>
+			<html>
+				<head>
+					<meta charset="UTF-8">
+					<title>command stations</title>
+				</head>
+				<body>
+			`)
 
-		data.Title = "command stations"
-		for name := range s.csMap {
-			data.Items[name] = &url.URL{Scheme: "http", Host: addr, Path: fmt.Sprintf("/cs/%s", name)}
+			for _, loco := range locos {
+				link := &url.URL{Path: fmt.Sprintf("/loco/%s", loco.name())}
+				fmt.Fprintf(&b, "<div><a href='%s'>%s</a></div>\n", link, html.EscapeString(loco.name()))
+			}
 		}
+	}
 
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		if err := idxTpl.Execute(w, data); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
+	b.WriteString(`<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<title>command stations</title>
+	</head>
+	<body>
+	<ul>
+`)
+	for name, cs := range s.csMap {
+		link := &url.URL{Path: fmt.Sprintf("/cs/%s", name)}
+		fmt.Fprintf(&b, "<div><a href='%s'>%s</a></div>\n", link, html.EscapeString(name))
+
+		b.WriteString(`<li>primary locos
+
+`)
+
+
+
+
+		")
+		fmt.Fprintf(&b, "<ul><a href='%s'>%s</a></div>\n", link, html.EscapeString(name))
+
+
+
+		renderLocos("primary locos", cs.filterLocos(func(loco *Loco) bool { return loco.isPrimary(cs) }))
+		renderLocos("secondary locos", cs.filterLocos(func(loco *Loco) bool { return loco.isSecondary(cs) }))
+	}
+	b.WriteString(`</ul>
+</body>
+</html>`)
+	_, err := w.Write(b.Bytes())
+	return err
+}
+*/
+
+// ServeHTTP implements the http.Handler interface.
+func (s *CSSet) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	data := csTplData{CSMap: map[string]csTpl{}}
+	for name, cs := range s.csMap {
+		data.CSMap[name] = csTpl{
+			Primaries:   cs.filterLocos(func(loco *Loco) bool { return loco.isPrimary(cs) }),
+			Secondaries: cs.filterLocos(func(loco *Loco) bool { return loco.isSecondary(cs) }),
 		}
+	}
+
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if err := csIdxTpl.Execute(w, data); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
 	}
 }
 
@@ -131,6 +182,17 @@ func newCS(lg logger.Logger, config *CSConfig, gw *gateway.Gateway) (*CS, error)
 }
 
 func (cs *CS) name() string { return cs.config.Name }
+
+// filterLocos returns a map of locos filtered by function filter.
+func (cs *CS) filterLocos(filter func(loco *Loco) bool) map[string]*Loco {
+	locos := map[string]*Loco{}
+	for name, loco := range cs.locos {
+		if filter(loco) {
+			locos[name] = loco
+		}
+	}
+	return locos
+}
 
 // close closes the command station and the underlying client connection.
 func (cs *CS) close() error {
