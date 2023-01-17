@@ -7,8 +7,8 @@ go 1.19
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.4.2
-	github.com/pico-cs/go-client v0.4.1
-	golang.org/x/exp v0.0.0-20230105202349-8879d0199aa3
+	github.com/pico-cs/go-client v0.4.3
+	golang.org/x/exp v0.0.0-20230116083435-1de6713980de
 	gopkg.in/yaml.v3 v3.0.1
 )
 
